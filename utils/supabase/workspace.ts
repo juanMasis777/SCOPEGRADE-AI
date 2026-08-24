@@ -42,17 +42,37 @@ export type AssessmentRecord = {
 export type ProposalRecord = {
   id: string;
   clientName: string;
+  clientEmail: string | null;
   title: string;
+  proposalNumber: string;
   status: "draft" | "sent" | "viewed" | "accepted" | "declined" | "expired";
   value: number;
+  maintenanceMonthly: number;
+  depositPercentage: number;
+  depositAmount: number;
+  scopeItems: string[];
+  addOns: string[];
+  clientMessage: string | null;
+  validUntil: string | null;
+  packageName: "Promotional" | "Professional" | "Custom" | null;
+  grade: "A" | "B" | "C" | null;
   createdAt: string;
 };
 
-type ClientRelation = { name: string } | Array<{ name: string }> | null;
+type ClientRelation = { name: string; email?: string | null } | Array<{ name: string; email?: string | null }> | null;
+type AssessmentRelation = { package_name: string; grade: string } | Array<{ package_name: string; grade: string }> | null;
 
-function relatedClientName(relation: ClientRelation) {
-  if (Array.isArray(relation)) return relation[0]?.name ?? "Client";
-  return relation?.name ?? "Client";
+function relatedClient(relation: ClientRelation) {
+  const client = Array.isArray(relation) ? relation[0] : relation;
+  return { name: client?.name ?? "Client", email: client?.email ?? null };
+}
+
+function relatedAssessment(relation: AssessmentRelation) {
+  const assessment = Array.isArray(relation) ? relation[0] : relation;
+  return {
+    packageName: (assessment?.package_name ?? null) as ProposalRecord["packageName"],
+    grade: (assessment?.grade ?? null) as ProposalRecord["grade"],
+  };
 }
 
 export async function loadWorkspaceData(
@@ -68,7 +88,7 @@ export async function loadWorkspaceData(
       .limit(100),
     supabase
       .from("proposals")
-      .select("id, title, status, subtotal, created_at, clients(name)")
+      .select("id, proposal_number, title, status, subtotal, maintenance_monthly, deposit_percentage, deposit_amount, scope_items, add_ons, client_message, valid_until, created_at, clients(name, email), assessments(package_name, grade)")
       .eq("owner_id", ownerId)
       .order("created_at", { ascending: false })
       .limit(100),
@@ -78,24 +98,63 @@ export async function loadWorkspaceData(
   if (proposalResult.error) throw proposalResult.error;
 
   return {
-    assessments: (assessmentResult.data ?? []).map((row) => ({
-      id: row.id,
-      clientName: relatedClientName(row.clients as ClientRelation),
-      projectName: row.project_name,
-      packageName: row.package_name as AssessmentRecord["packageName"],
-      price: Number(row.recommended_price),
-      grade: row.grade as AssessmentRecord["grade"],
-      createdAt: row.created_at,
-    })),
-    proposals: (proposalResult.data ?? []).map((row) => ({
-      id: row.id,
-      clientName: relatedClientName(row.clients as ClientRelation),
-      title: row.title,
-      status: row.status as ProposalRecord["status"],
-      value: Number(row.subtotal),
-      createdAt: row.created_at,
-    })),
+    assessments: (assessmentResult.data ?? []).map((row) => {
+      const client = relatedClient(row.clients as ClientRelation);
+      return {
+        id: row.id,
+        clientName: client.name,
+        projectName: row.project_name,
+        packageName: row.package_name as AssessmentRecord["packageName"],
+        price: Number(row.recommended_price),
+        grade: row.grade as AssessmentRecord["grade"],
+        createdAt: row.created_at,
+      };
+    }),
+    proposals: (proposalResult.data ?? []).map((row) => {
+      const client = relatedClient(row.clients as ClientRelation);
+      const assessment = relatedAssessment(row.assessments as AssessmentRelation);
+      return {
+        id: row.id,
+        clientName: client.name,
+        clientEmail: client.email,
+        title: row.title,
+        proposalNumber: row.proposal_number,
+        status: row.status as ProposalRecord["status"],
+        value: Number(row.subtotal),
+        maintenanceMonthly: Number(row.maintenance_monthly),
+        depositPercentage: Number(row.deposit_percentage),
+        depositAmount: Number(row.deposit_amount),
+        scopeItems: Array.isArray(row.scope_items) ? row.scope_items.map(String) : [],
+        addOns: Array.isArray(row.add_ons) ? row.add_ons.map(String) : [],
+        clientMessage: row.client_message,
+        validUntil: row.valid_until,
+        packageName: assessment.packageName,
+        grade: assessment.grade,
+        createdAt: row.created_at,
+      };
+    }),
   };
+}
+
+export async function updateProposalStatus(
+  supabase: SupabaseClient,
+  ownerId: string,
+  proposalId: string,
+  status: ProposalRecord["status"],
+) {
+  const timestampUpdates = status === "sent"
+    ? { sent_at: new Date().toISOString() }
+    : status === "accepted"
+      ? { accepted_at: new Date().toISOString() }
+      : {};
+
+  const { error } = await supabase
+    .from("proposals")
+    .update({ status, ...timestampUpdates })
+    .eq("id", proposalId)
+    .eq("owner_id", ownerId);
+
+  if (error) throw error;
 }
 
 export async function saveAssessmentAndProposal(
@@ -177,6 +236,9 @@ export async function saveAssessmentAndProposal(
   if (assessmentError) throw assessmentError;
 
   const proposalNumber = `SG-${Date.now().toString(36).toUpperCase()}`;
+  const validUntil = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
   const { data: createdProposal, error: proposalError } = await supabase
     .from("proposals")
     .insert({
@@ -192,6 +254,7 @@ export async function saveAssessmentAndProposal(
       deposit_amount: Math.round(assessment.price * 50) / 100,
       scope_items: assessment.included,
       add_ons: assessment.extras,
+      valid_until: validUntil,
     })
     .select("id")
     .single();

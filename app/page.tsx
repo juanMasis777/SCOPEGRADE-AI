@@ -9,9 +9,10 @@ import {
   loadWorkspaceData,
   type ProposalRecord,
   saveAssessmentAndProposal,
+  updateProposalStatus,
 } from "../utils/supabase/workspace";
 
-type View = "assess" | "dashboard" | "proposals" | "rules";
+type View = "assess" | "dashboard" | "proposals" | "proposal-detail" | "rules";
 type ProjectType = "landing" | "business" | "ecommerce" | "webapp";
 
 type FormState = {
@@ -80,6 +81,14 @@ function shortDate(value: string) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
+  }).format(new Date(value));
+}
+
+function fullDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
   }).format(new Date(value));
 }
 
@@ -239,8 +248,10 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
   const [proposalCreated, setProposalCreated] = useState(false);
   const [assessmentRecords, setAssessmentRecords] = useState<AssessmentRecord[]>([]);
   const [proposalRecords, setProposalRecords] = useState<ProposalRecord[]>([]);
+  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState(false);
   const [saveError, setSaveError] = useState("");
   const assessment = useMemo(() => assessProject(form), [form]);
   const displayName = typeof user.user_metadata.full_name === "string" && user.user_metadata.full_name.trim()
@@ -252,6 +263,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
     .join("")
     .slice(0, 2)
     .toUpperCase();
+  const selectedProposal = proposalRecords.find((record) => record.id === selectedProposalId) ?? null;
 
   useEffect(() => {
     let active = true;
@@ -306,6 +318,29 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
     }
   }
 
+  function openProposal(proposalId: string) {
+    setSelectedProposalId(proposalId);
+    setSaveError("");
+    setView("proposal-detail");
+  }
+
+  async function changeProposalStatus(status: ProposalRecord["status"]) {
+    if (!selectedProposal) return;
+    setStatusUpdating(true);
+    setSaveError("");
+
+    try {
+      await updateProposalStatus(createClient(), user.id, selectedProposal.id, status);
+      setProposalRecords((current) => current.map((record) => (
+        record.id === selectedProposal.id ? { ...record, status } : record
+      )));
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to update this proposal.");
+    } finally {
+      setStatusUpdating(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -338,7 +373,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
 
       <section className="workspace">
         <header className="topbar">
-          <div><span className="eyebrow">ScopeGrade AI</span><h1>{navItems.find((item) => item.id === view)?.label}</h1></div>
+          <div><span className="eyebrow">ScopeGrade AI</span><h1>{view === "proposal-detail" ? "Proposal details" : navItems.find((item) => item.id === view)?.label}</h1></div>
           <div className="topbar-actions">
             <span className="status-pill"><i /> Rule set v1.0</span>
             <button className="new-button" onClick={() => { setView("assess"); resetAssessment(); }}><span>+</span> New project</button>
@@ -347,7 +382,8 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
 
         {view === "assess" && <AssessmentView step={step} setStep={setStep} form={form} update={update} assessment={assessment} resetAssessment={resetAssessment} createProposal={createProposal} saving={saving} saveError={saveError} />}
         {view === "dashboard" && <DashboardView setView={setView} setStep={setStep} records={assessmentRecords} loading={dataLoading} />}
-        {view === "proposals" && <ProposalsView proposalCreated={proposalCreated} records={proposalRecords} setView={setView} loading={dataLoading} />}
+        {view === "proposals" && <ProposalsView proposalCreated={proposalCreated} records={proposalRecords} setView={setView} loading={dataLoading} onOpen={openProposal} />}
+        {view === "proposal-detail" && selectedProposal && <ProposalDetailView record={selectedProposal} ownerName={displayName} ownerEmail={user.email ?? ""} onBack={() => setView("proposals")} onChangeStatus={changeProposalStatus} updating={statusUpdating} error={saveError} />}
         {view === "rules" && <RulesView />}
       </section>
     </main>
@@ -513,11 +549,12 @@ function Stat({ label, value, change, accent = false }: { label: string; value: 
   return <article className={accent ? "stat-card accent" : "stat-card"}><span>{label}</span><strong>{value}</strong><small>{change}</small></article>;
 }
 
-function ProposalsView({ proposalCreated, records, setView, loading }: {
+function ProposalsView({ proposalCreated, records, setView, loading, onOpen }: {
   proposalCreated: boolean;
   records: ProposalRecord[];
   setView: (view: View) => void;
   loading: boolean;
+  onOpen: (proposalId: string) => void;
 }) {
   return (
     <div className="content-wrap proposals-page">
@@ -529,16 +566,102 @@ function ProposalsView({ proposalCreated, records, setView, loading }: {
         <div className="empty-state proposal-empty"><span>SG</span><strong>No proposals yet</strong><p>Complete an assessment and ScopeGrade will create the first draft.</p><button className="primary-button" onClick={() => setView("assess")}>Create first assessment</button></div>
       ) : (
         <div className="proposal-grid">
-          {records.map((record, index) => <ProposalCard key={record.id} featured={proposalCreated && index === 0} status={record.status} title={record.title} client={record.clientName} value={record.value} date={shortDate(record.createdAt)} />)}
+          {records.map((record, index) => <ProposalCard key={record.id} featured={proposalCreated && index === 0} status={record.status} title={record.title} client={record.clientName} value={record.value} date={shortDate(record.createdAt)} onOpen={() => onOpen(record.id)} />)}
         </div>
       )}
     </div>
   );
 }
 
-function ProposalCard({ status, title, client, value, date, featured = false }: { status: ProposalRecord["status"]; title: string; client: string; value: number; date: string; featured?: boolean }) {
+function ProposalCard({ status, title, client, value, date, featured = false, onOpen }: { status: ProposalRecord["status"]; title: string; client: string; value: number; date: string; featured?: boolean; onOpen: () => void }) {
   const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
-  return <article className={featured ? "proposal-card featured" : "proposal-card"}><div className="proposal-card-top"><span className={`proposal-status ${status}`}>{statusLabel}</span><span>{date}</span></div><div className="proposal-client"><span>{client.split(" ").map((part) => part[0]).join("").slice(0,2).toUpperCase()}</span><div><strong>{title}</strong><small>{client}</small></div></div><div className="proposal-value"><span>Proposed investment</span><strong>{money(value)}</strong></div><div className="proposal-actions"><button>Open proposal</button><button className="icon-button" aria-label="More proposal actions">•••</button></div></article>;
+  return <article className={featured ? "proposal-card featured" : "proposal-card"}><div className="proposal-card-top"><span className={`proposal-status ${status}`}>{statusLabel}</span><span>{date}</span></div><div className="proposal-client"><span>{client.split(" ").map((part) => part[0]).join("").slice(0,2).toUpperCase()}</span><div><strong>{title}</strong><small>{client}</small></div></div><div className="proposal-value"><span>Proposed investment</span><strong>{money(value)}</strong></div><div className="proposal-actions"><button onClick={onOpen}>Open proposal</button><button className="icon-button" aria-label="More proposal actions">•••</button></div></article>;
+}
+
+function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeStatus, updating, error }: {
+  record: ProposalRecord;
+  ownerName: string;
+  ownerEmail: string;
+  onBack: () => void;
+  onChangeStatus: (status: ProposalRecord["status"]) => Promise<void>;
+  updating: boolean;
+  error: string;
+}) {
+  const statusLabel = record.status.charAt(0).toUpperCase() + record.status.slice(1);
+  const created = new Date(record.createdAt);
+  const fallbackExpiry = new Date(created.getTime() + 14 * 24 * 60 * 60 * 1000);
+  const expirationDate = record.validUntil
+    ? fullDate(`${record.validUntil}T12:00:00`)
+    : fullDate(fallbackExpiry.toISOString());
+  const nextStatus = record.status === "draft"
+    ? "sent"
+    : record.status === "sent" || record.status === "viewed"
+      ? "accepted"
+      : null;
+  const nextStatusLabel = nextStatus === "sent" ? "Mark as sent" : "Mark as accepted";
+
+  return (
+    <div className="content-wrap proposal-detail-page">
+      <div className="proposal-toolbar print-hidden">
+        <button className="secondary-button" onClick={onBack}>← Back to proposals</button>
+        <div>
+          <button className="secondary-button" onClick={() => window.print()}>Download / Print PDF</button>
+          {nextStatus && <button className="primary-button" disabled={updating} onClick={() => void onChangeStatus(nextStatus)}>{updating ? "Updating…" : nextStatusLabel} {!updating && <span>→</span>}</button>}
+        </div>
+      </div>
+
+      {error && <p className="save-error print-hidden" role="alert">{error}</p>}
+
+      <article className="proposal-paper">
+        <header className="proposal-document-header">
+          <div className="proposal-document-brand"><span>SG</span><div><strong>ScopeGrade AI</strong><small>Qualify the project. Protect your price.</small></div></div>
+          <div className="proposal-document-meta"><span>Proposal</span><strong>{record.proposalNumber}</strong><small>{fullDate(record.createdAt)}</small></div>
+        </header>
+
+        <section className="proposal-document-hero">
+          <div><span>Project proposal</span><h2>{record.title}</h2><p>Prepared for {record.clientName}</p></div>
+          <span className={`proposal-status ${record.status}`}>{statusLabel}</span>
+        </section>
+
+        <section className="proposal-parties">
+          <div><span>Prepared for</span><strong>{record.clientName}</strong><p>{record.clientEmail ?? "Client email not provided"}</p></div>
+          <div><span>Prepared by</span><strong>{ownerName}</strong><p>{ownerEmail}</p></div>
+          <div><span>Valid until</span><strong>{expirationDate}</strong><p>14-day proposal window</p></div>
+        </section>
+
+        <section className="proposal-document-section">
+          <div className="proposal-section-heading"><span>01</span><div><small>Recommended solution</small><h3>{record.packageName ?? "Website"} package</h3></div>{record.grade && <b>Grade {record.grade}</b>}</div>
+          <p className="proposal-intro">This proposal reflects the project requirements captured during the ScopeGrade assessment. The investment is tied directly to the approved scope below.</p>
+        </section>
+
+        <section className="proposal-document-section">
+          <div className="proposal-section-heading"><span>02</span><div><small>Project scope</small><h3>Included deliverables</h3></div></div>
+          <ul className="proposal-scope-list">
+            {record.scopeItems.length > 0 ? record.scopeItems.map((item) => <li key={item}><span>✓</span>{item}</li>) : <li><span>✓</span>Scope to be confirmed during project kickoff</li>}
+          </ul>
+          {record.addOns.length > 0 && <div className="proposal-addons"><small>Selected add-ons</small>{record.addOns.map((item) => <p key={item}>+ {item}</p>)}</div>}
+        </section>
+
+        <section className="proposal-investment">
+          <div><span>Project investment</span><strong>{money(record.value)}</strong><p>Fixed to the scope described above</p></div>
+          <div><span>Deposit to begin</span><strong>{money(record.depositAmount)}</strong><p>{record.depositPercentage}% of project investment</p></div>
+          <div><span>Ongoing care</span><strong>{record.maintenanceMonthly > 0 ? `${money(record.maintenanceMonthly)}/mo` : "Not included"}</strong><p>{record.maintenanceMonthly > 0 ? "First month included at no charge" : "May be added before launch"}</p></div>
+        </section>
+
+        <section className="proposal-document-section proposal-terms">
+          <div className="proposal-section-heading"><span>03</span><div><small>Working agreement</small><h3>Next steps and terms</h3></div></div>
+          <ol>
+            <li><span>1</span><p><strong>Approve the scope</strong><small>Confirm the deliverables, investment and project expectations.</small></p></li>
+            <li><span>2</span><p><strong>Pay the deposit</strong><small>The project is scheduled after the deposit is received.</small></p></li>
+            <li><span>3</span><p><strong>Begin production</strong><small>Final content, access and project materials are collected at kickoff.</small></p></li>
+          </ol>
+          <p className="proposal-legal">Requests outside this approved scope may require a separate change order. The remaining project balance is due before final launch or transfer.</p>
+        </section>
+
+        <footer className="proposal-document-footer"><span>ScopeGrade AI · Powered by MADEVHUB</span><span>{record.proposalNumber}</span></footer>
+      </article>
+    </div>
+  );
 }
 
 function RulesView() {
