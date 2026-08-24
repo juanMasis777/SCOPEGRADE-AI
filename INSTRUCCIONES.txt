@@ -1,0 +1,38 @@
+SCOPEGRADE AI — PRIMERA VERSION MVP
+====================================
+
+REQUISITOS
+- Node.js 22 o una version compatible.
+- Visual Studio Code.
+
+COMANDOS PARA EJECUTAR EL PROYECTO
+1. Abre la carpeta ScopeGrade_AI_MVP en Visual Studio Code.
+2. Abre la terminal dentro de esa carpeta.
+3. Ejecuta:
+
+   npm install
+   npm run dev
+
+4. Abre la direccion local que aparezca en la terminal.
+
+ARCHIVOS PRINCIPALES
+- app/page.tsx: interfaz, formularios y logica de calificacion/precios.
+- app/globals.css: diseno completo y adaptacion para telefonos.
+- app/layout.tsx: titulo, descripcion y configuracion para compartir.
+- public/og.png: imagen social de ScopeGrade AI.
+
+FUNCIONES INCLUIDAS
+- Evaluacion del proyecto en tres pasos.
+- Clasificacion Promotional, Professional o Custom.
+- Calculo dinamico del precio recomendado.
+- Dashboard demostrativo.
+- Creacion de una propuesta preliminar.
+- Pantalla con las reglas de precio.
+
+ESTADO DE ESTA VERSION
+- Es un MVP funcional del lado del navegador.
+- Aun no guarda clientes permanentemente.
+- Aun no tiene registro de usuarios.
+- Aun no procesa pagos con Stripe.
+- Las siguientes etapas agregaran base de datos, autenticacion, PDF y pagos.
+
