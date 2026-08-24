@@ -1,6 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { useEffect, useMemo, useState } from "react";
+import AuthGate from "./auth-gate";
+import { createClient } from "../utils/supabase/client";
+import {
+  type AssessmentRecord,
+  loadWorkspaceData,
+  type ProposalRecord,
+  saveAssessmentAndProposal,
+} from "../utils/supabase/workspace";
 
 type View = "assess" | "dashboard" | "proposals" | "rules";
 type ProjectType = "landing" | "business" | "ecommerce" | "webapp";
@@ -65,6 +74,13 @@ function money(value: number) {
     currency: "USD",
     minimumFractionDigits: value % 1 ? 2 : 0,
   }).format(value);
+}
+
+function shortDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
 }
 
 function assessProject(form: FormState): Assessment {
@@ -209,11 +225,56 @@ const navItems: Array<{ id: View; label: string; short: string }> = [
 ];
 
 export default function Home() {
+  return (
+    <AuthGate>
+      {(user, signOut) => <ScopeGradeWorkspace user={user} onSignOut={signOut} />}
+    </AuthGate>
+  );
+}
+
+function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () => Promise<void> }) {
   const [view, setView] = useState<View>("assess");
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<FormState>(initialForm);
   const [proposalCreated, setProposalCreated] = useState(false);
+  const [assessmentRecords, setAssessmentRecords] = useState<AssessmentRecord[]>([]);
+  const [proposalRecords, setProposalRecords] = useState<ProposalRecord[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const assessment = useMemo(() => assessProject(form), [form]);
+  const displayName = typeof user.user_metadata.full_name === "string" && user.user_metadata.full_name.trim()
+    ? user.user_metadata.full_name.trim()
+    : user.email?.split("@")[0] ?? "Workspace owner";
+  const initials = displayName
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  useEffect(() => {
+    let active = true;
+    setDataLoading(true);
+
+    void loadWorkspaceData(createClient(), user.id)
+      .then((data) => {
+        if (!active) return;
+        setAssessmentRecords(data.assessments);
+        setProposalRecords(data.proposals);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setSaveError(error instanceof Error ? error.message : "Unable to load workspace data.");
+      })
+      .finally(() => {
+        if (active) setDataLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user.id]);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -223,11 +284,26 @@ export default function Home() {
     setForm(initialForm);
     setStep(1);
     setProposalCreated(false);
+    setSaveError("");
   }
 
-  function createProposal() {
-    setProposalCreated(true);
-    setView("proposals");
+  async function createProposal() {
+    setSaving(true);
+    setSaveError("");
+
+    try {
+      const supabase = createClient();
+      await saveAssessmentAndProposal(supabase, user.id, form, assessment);
+      const data = await loadWorkspaceData(supabase, user.id);
+      setAssessmentRecords(data.assessments);
+      setProposalRecords(data.proposals);
+      setProposalCreated(true);
+      setView("proposals");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to save this assessment.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -254,8 +330,9 @@ export default function Home() {
         </div>
 
         <div className="sidebar-footer">
-          <div className="avatar">JM</div>
-          <div><strong>Juan Masis</strong><small>Workspace owner</small></div>
+          <div className="avatar">{initials}</div>
+          <div className="sidebar-user"><strong>{displayName}</strong><small>{user.email}</small></div>
+          <button className="signout-button" type="button" onClick={() => void onSignOut()} aria-label="Sign out" title="Sign out">↗</button>
         </div>
       </aside>
 
@@ -268,23 +345,25 @@ export default function Home() {
           </div>
         </header>
 
-        {view === "assess" && <AssessmentView step={step} setStep={setStep} form={form} update={update} assessment={assessment} resetAssessment={resetAssessment} createProposal={createProposal} />}
-        {view === "dashboard" && <DashboardView setView={setView} setStep={setStep} />}
-        {view === "proposals" && <ProposalsView proposalCreated={proposalCreated} form={form} assessment={assessment} setView={setView} />}
+        {view === "assess" && <AssessmentView step={step} setStep={setStep} form={form} update={update} assessment={assessment} resetAssessment={resetAssessment} createProposal={createProposal} saving={saving} saveError={saveError} />}
+        {view === "dashboard" && <DashboardView setView={setView} setStep={setStep} records={assessmentRecords} loading={dataLoading} />}
+        {view === "proposals" && <ProposalsView proposalCreated={proposalCreated} records={proposalRecords} setView={setView} loading={dataLoading} />}
         {view === "rules" && <RulesView />}
       </section>
     </main>
   );
 }
 
-function AssessmentView({ step, setStep, form, update, assessment, resetAssessment, createProposal }: {
+function AssessmentView({ step, setStep, form, update, assessment, resetAssessment, createProposal, saving, saveError }: {
   step: number;
   setStep: (step: number) => void;
   form: FormState;
   update: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
   assessment: Assessment;
   resetAssessment: () => void;
-  createProposal: () => void;
+  createProposal: () => Promise<void>;
+  saving: boolean;
+  saveError: string;
 }) {
   const canContinue = form.projectName.trim() && form.clientName.trim();
   return (
@@ -371,7 +450,8 @@ function AssessmentView({ step, setStep, form, update, assessment, resetAssessme
                 {assessment.extras.length > 0 && <div className="extras-block"><small>Add-ons</small>{assessment.extras.map((item) => <p key={item}>+ {item}</p>)}</div>}
               </article>
             </div>
-            <div className="proposal-bar"><div><span>Ready for the client</span><strong>Turn this assessment into a polished proposal.</strong></div><div><button className="secondary-button" onClick={() => setStep(2)}>Edit scope</button><button className="primary-button" onClick={createProposal}>Create proposal <span>→</span></button></div></div>
+            <div className="proposal-bar"><div><span>Ready for the client</span><strong>Save this assessment and create a proposal draft.</strong></div><div><button className="secondary-button" onClick={() => setStep(2)} disabled={saving}>Edit scope</button><button className="primary-button" onClick={() => void createProposal()} disabled={saving}>{saving ? "Saving…" : "Save & create proposal"} {!saving && <span>→</span>}</button></div></div>
+            {saveError && <p className="save-error" role="alert">{saveError}</p>}
           </div>
         )}
       </section>
@@ -400,19 +480,30 @@ function Toggle({ label, detail, checked, onChange }: { label: string; detail: s
   return <button type="button" className={checked ? "toggle-card checked" : "toggle-card"} onClick={() => onChange(!checked)} aria-pressed={checked}><span className="switch"><i /></span><span><strong>{label}</strong><small>{detail}</small></span></button>;
 }
 
-function DashboardView({ setView, setStep }: { setView: (view: View) => void; setStep: (step: number) => void }) {
-  const recent = [
-    { client: "Martinez Roofing", project: "Lead generation website", package: "Professional", value: "$1,249", grade: "B", date: "Today" },
-    { client: "Bella Studio", project: "Promotional landing page", package: "Promotional", value: "$99.99", grade: "A", date: "Yesterday" },
-    { client: "Nova Commerce", project: "Online store rebuild", package: "Custom", value: "$3,150", grade: "C", date: "Aug 18" },
-  ];
+function DashboardView({ setView, setStep, records, loading }: {
+  setView: (view: View) => void;
+  setStep: (step: number) => void;
+  records: AssessmentRecord[];
+  loading: boolean;
+}) {
+  const quotedValue = records.reduce((total, record) => total + record.price, 0);
+  const averageProject = records.length ? quotedValue / records.length : 0;
+  const scopeProtected = records.reduce((total, record) => total + Math.max(0, record.price - 99.99), 0);
+  const recent = records.slice(0, 10);
+
   return (
     <div className="content-wrap dashboard-page">
       <div className="dashboard-welcome"><div><span className="section-kicker">Overview</span><h2>Your scope pipeline, at a glance.</h2><p>Protect margins, qualify faster and keep every proposal consistent.</p></div><button className="primary-button" onClick={() => { setView("assess"); setStep(1); }}>Grade a new project <span>→</span></button></div>
-      <div className="stat-grid"><Stat label="Assessments" value="24" change="+18% this month" /><Stat label="Quoted value" value="$18.4K" change="+$4.2K this month" /><Stat label="Avg. project" value="$767" change="Up from $514" /><Stat label="Scope protected" value="$6.8K" change="From underpricing" accent /></div>
+      <div className="stat-grid"><Stat label="Assessments" value={loading ? "—" : String(records.length)} change="Saved assessments" /><Stat label="Quoted value" value={loading ? "—" : money(quotedValue)} change="Total recommended value" /><Stat label="Avg. project" value={loading ? "—" : money(averageProject)} change="Average recommended price" /><Stat label="Scope protected" value={loading ? "—" : money(scopeProtected)} change="Compared with $99.99 pricing" accent /></div>
       <section className="table-card">
         <div className="table-heading"><div><span className="section-kicker">Recent activity</span><h3>Latest assessments</h3></div><button onClick={() => setView("proposals")} className="text-button">View proposals →</button></div>
-        <div className="responsive-table"><table><thead><tr><th>Client / project</th><th>Package</th><th>Grade</th><th>Recommended</th><th>Date</th></tr></thead><tbody>{recent.map((row) => <tr key={row.client}><td><strong>{row.client}</strong><small>{row.project}</small></td><td><span className={`package-tag ${row.package.toLowerCase()}`}>{row.package}</span></td><td><span className="table-grade">{row.grade}</span></td><td><strong>{row.value}</strong></td><td>{row.date}</td></tr>)}</tbody></table></div>
+        {loading ? (
+          <div className="empty-state"><span className="auth-spinner" /><strong>Loading your workspace…</strong></div>
+        ) : recent.length === 0 ? (
+          <div className="empty-state"><span>SG</span><strong>No assessments yet</strong><p>Grade your first client project to populate the dashboard.</p><button className="primary-button" onClick={() => { setView("assess"); setStep(1); }}>Create first assessment</button></div>
+        ) : (
+          <div className="responsive-table"><table><thead><tr><th>Client / project</th><th>Package</th><th>Grade</th><th>Recommended</th><th>Date</th></tr></thead><tbody>{recent.map((row) => <tr key={row.id}><td><strong>{row.clientName}</strong><small>{row.projectName}</small></td><td><span className={`package-tag ${row.packageName.toLowerCase()}`}>{row.packageName}</span></td><td><span className="table-grade">{row.grade}</span></td><td><strong>{money(row.price)}</strong></td><td>{shortDate(row.createdAt)}</td></tr>)}</tbody></table></div>
+        )}
       </section>
     </div>
   );
@@ -422,22 +513,32 @@ function Stat({ label, value, change, accent = false }: { label: string; value: 
   return <article className={accent ? "stat-card accent" : "stat-card"}><span>{label}</span><strong>{value}</strong><small>{change}</small></article>;
 }
 
-function ProposalsView({ proposalCreated, form, assessment, setView }: { proposalCreated: boolean; form: FormState; assessment: Assessment; setView: (view: View) => void }) {
+function ProposalsView({ proposalCreated, records, setView, loading }: {
+  proposalCreated: boolean;
+  records: ProposalRecord[];
+  setView: (view: View) => void;
+  loading: boolean;
+}) {
   return (
     <div className="content-wrap proposals-page">
-      {proposalCreated && <div className="success-banner"><span>✓</span><div><strong>Proposal draft created</strong><p>Review the scope and pricing before sharing it with the client.</p></div></div>}
+      {proposalCreated && <div className="success-banner"><span>✓</span><div><strong>Assessment and proposal saved</strong><p>Your new records are now protected in the ScopeGrade database.</p></div></div>}
       <div className="dashboard-welcome"><div><span className="section-kicker">Sales documents</span><h2>Proposals built from protected scopes.</h2><p>Every price is tied to the features the client actually requested.</p></div><button className="primary-button" onClick={() => setView("assess")}>New assessment <span>→</span></button></div>
-      <div className="proposal-grid">
-        {proposalCreated && <article className="proposal-card featured"><div className="proposal-card-top"><span className={`package-tag ${assessment.packageName.toLowerCase()}`}>Draft · {assessment.packageName}</span><span>Just now</span></div><div className="proposal-client"><span>{(form.clientName || "NC").split(" ").map((part) => part[0]).join("").slice(0,2).toUpperCase()}</span><div><strong>{form.projectName || "New client project"}</strong><small>{form.clientName || "Client name"}</small></div></div><div className="proposal-value"><span>Proposed investment</span><strong>{money(assessment.price)}</strong></div><div className="proposal-actions"><button>Review proposal</button><button className="icon-button" aria-label="More proposal actions">•••</button></div></article>}
-        <ProposalCard status="Sent" title="Martinez Roofing Website" client="Carlos Martinez" value="$1,249" date="Aug 20" />
-        <ProposalCard status="Accepted" title="Bella Studio Landing Page" client="Isabella Reed" value="$99.99" date="Aug 19" />
-      </div>
+      {loading ? (
+        <div className="empty-state proposal-empty"><span className="auth-spinner" /><strong>Loading proposals…</strong></div>
+      ) : records.length === 0 ? (
+        <div className="empty-state proposal-empty"><span>SG</span><strong>No proposals yet</strong><p>Complete an assessment and ScopeGrade will create the first draft.</p><button className="primary-button" onClick={() => setView("assess")}>Create first assessment</button></div>
+      ) : (
+        <div className="proposal-grid">
+          {records.map((record, index) => <ProposalCard key={record.id} featured={proposalCreated && index === 0} status={record.status} title={record.title} client={record.clientName} value={record.value} date={shortDate(record.createdAt)} />)}
+        </div>
+      )}
     </div>
   );
 }
 
-function ProposalCard({ status, title, client, value, date }: { status: string; title: string; client: string; value: string; date: string }) {
-  return <article className="proposal-card"><div className="proposal-card-top"><span className={`proposal-status ${status.toLowerCase()}`}>{status}</span><span>{date}</span></div><div className="proposal-client"><span>{client.split(" ").map((part) => part[0]).join("").slice(0,2)}</span><div><strong>{title}</strong><small>{client}</small></div></div><div className="proposal-value"><span>Proposed investment</span><strong>{value}</strong></div><div className="proposal-actions"><button>Open proposal</button><button className="icon-button" aria-label="More proposal actions">•••</button></div></article>;
+function ProposalCard({ status, title, client, value, date, featured = false }: { status: ProposalRecord["status"]; title: string; client: string; value: number; date: string; featured?: boolean }) {
+  const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
+  return <article className={featured ? "proposal-card featured" : "proposal-card"}><div className="proposal-card-top"><span className={`proposal-status ${status}`}>{statusLabel}</span><span>{date}</span></div><div className="proposal-client"><span>{client.split(" ").map((part) => part[0]).join("").slice(0,2).toUpperCase()}</span><div><strong>{title}</strong><small>{client}</small></div></div><div className="proposal-value"><span>Proposed investment</span><strong>{money(value)}</strong></div><div className="proposal-actions"><button>Open proposal</button><button className="icon-button" aria-label="More proposal actions">•••</button></div></article>;
 }
 
 function RulesView() {
