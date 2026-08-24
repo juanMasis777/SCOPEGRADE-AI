@@ -31,6 +31,7 @@ export type AssessmentInput = {
 
 export type AssessmentRecord = {
   id: string;
+  clientId: string | null;
   clientName: string;
   projectName: string;
   packageName: "Promotional" | "Professional" | "Custom";
@@ -41,6 +42,7 @@ export type AssessmentRecord = {
 
 export type ProposalRecord = {
   id: string;
+  clientId: string | null;
   clientName: string;
   clientEmail: string | null;
   title: string;
@@ -57,6 +59,24 @@ export type ProposalRecord = {
   packageName: "Promotional" | "Professional" | "Custom" | null;
   grade: "A" | "B" | "C" | null;
   createdAt: string;
+};
+
+export type ClientRecord = {
+  id: string;
+  name: string;
+  company: string | null;
+  email: string | null;
+  phone: string | null;
+  notes: string | null;
+  createdAt: string;
+};
+
+export type ClientUpdateInput = {
+  name: string;
+  company: string;
+  email: string;
+  phone: string;
+  notes: string;
 };
 
 type ClientRelation = { name: string; email?: string | null } | Array<{ name: string; email?: string | null }> | null;
@@ -78,30 +98,47 @@ function relatedAssessment(relation: AssessmentRelation) {
 export async function loadWorkspaceData(
   supabase: SupabaseClient,
   ownerId: string,
-): Promise<{ assessments: AssessmentRecord[]; proposals: ProposalRecord[] }> {
-  const [assessmentResult, proposalResult] = await Promise.all([
+): Promise<{ clients: ClientRecord[]; assessments: AssessmentRecord[]; proposals: ProposalRecord[] }> {
+  const [clientResult, assessmentResult, proposalResult] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id, name, company, email, phone, notes, created_at")
+      .eq("owner_id", ownerId)
+      .order("created_at", { ascending: false })
+      .limit(250),
     supabase
       .from("assessments")
-      .select("id, project_name, package_name, recommended_price, grade, created_at, clients(name)")
+      .select("id, client_id, project_name, package_name, recommended_price, grade, created_at, clients(name)")
       .eq("owner_id", ownerId)
       .order("created_at", { ascending: false })
       .limit(100),
     supabase
       .from("proposals")
-      .select("id, proposal_number, title, status, subtotal, maintenance_monthly, deposit_percentage, deposit_amount, scope_items, add_ons, client_message, valid_until, created_at, clients(name, email), assessments(package_name, grade)")
+      .select("id, client_id, proposal_number, title, status, subtotal, maintenance_monthly, deposit_percentage, deposit_amount, scope_items, add_ons, client_message, valid_until, created_at, clients(name, email), assessments(package_name, grade)")
       .eq("owner_id", ownerId)
       .order("created_at", { ascending: false })
       .limit(100),
   ]);
 
+  if (clientResult.error) throw clientResult.error;
   if (assessmentResult.error) throw assessmentResult.error;
   if (proposalResult.error) throw proposalResult.error;
 
   return {
+    clients: (clientResult.data ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      company: row.company,
+      email: row.email,
+      phone: row.phone,
+      notes: row.notes,
+      createdAt: row.created_at,
+    })),
     assessments: (assessmentResult.data ?? []).map((row) => {
       const client = relatedClient(row.clients as ClientRelation);
       return {
         id: row.id,
+        clientId: row.client_id,
         clientName: client.name,
         projectName: row.project_name,
         packageName: row.package_name as AssessmentRecord["packageName"],
@@ -115,6 +152,7 @@ export async function loadWorkspaceData(
       const assessment = relatedAssessment(row.assessments as AssessmentRelation);
       return {
         id: row.id,
+        clientId: row.client_id,
         clientName: client.name,
         clientEmail: client.email,
         title: row.title,
@@ -134,6 +172,39 @@ export async function loadWorkspaceData(
       };
     }),
   };
+}
+
+export async function updateClientDetails(
+  supabase: SupabaseClient,
+  ownerId: string,
+  clientId: string,
+  input: ClientUpdateInput,
+) {
+  const { data, error } = await supabase
+    .from("clients")
+    .update({
+      name: input.name.trim(),
+      company: input.company.trim() || null,
+      email: input.email.trim().toLowerCase() || null,
+      phone: input.phone.trim() || null,
+      notes: input.notes.trim() || null,
+    })
+    .eq("id", clientId)
+    .eq("owner_id", ownerId)
+    .select("id, name, company, email, phone, notes, created_at")
+    .single();
+
+  if (error) throw error;
+
+  return {
+    id: data.id,
+    name: data.name,
+    company: data.company,
+    email: data.email,
+    phone: data.phone,
+    notes: data.notes,
+    createdAt: data.created_at,
+  } satisfies ClientRecord;
 }
 
 export async function updateProposalStatus(

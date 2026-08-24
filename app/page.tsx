@@ -6,13 +6,16 @@ import AuthGate from "./auth-gate";
 import { createClient } from "../utils/supabase/client";
 import {
   type AssessmentRecord,
+  type ClientRecord,
+  type ClientUpdateInput,
   loadWorkspaceData,
   type ProposalRecord,
   saveAssessmentAndProposal,
+  updateClientDetails,
   updateProposalStatus,
 } from "../utils/supabase/workspace";
 
-type View = "assess" | "dashboard" | "proposals" | "proposal-detail" | "rules";
+type View = "assess" | "clients" | "client-detail" | "dashboard" | "proposals" | "proposal-detail" | "rules";
 type ProjectType = "landing" | "business" | "ecommerce" | "webapp";
 
 type FormState = {
@@ -228,9 +231,10 @@ function assessProject(form: FormState): Assessment {
 
 const navItems: Array<{ id: View; label: string; short: string }> = [
   { id: "assess", label: "New assessment", short: "01" },
-  { id: "dashboard", label: "Dashboard", short: "02" },
-  { id: "proposals", label: "Proposals", short: "03" },
-  { id: "rules", label: "Pricing rules", short: "04" },
+  { id: "clients", label: "Clients", short: "02" },
+  { id: "dashboard", label: "Dashboard", short: "03" },
+  { id: "proposals", label: "Proposals", short: "04" },
+  { id: "rules", label: "Pricing rules", short: "05" },
 ];
 
 export default function Home() {
@@ -246,11 +250,14 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<FormState>(initialForm);
   const [proposalCreated, setProposalCreated] = useState(false);
+  const [clientRecords, setClientRecords] = useState<ClientRecord[]>([]);
   const [assessmentRecords, setAssessmentRecords] = useState<AssessmentRecord[]>([]);
   const [proposalRecords, setProposalRecords] = useState<ProposalRecord[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [clientSaving, setClientSaving] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [saveError, setSaveError] = useState("");
   const assessment = useMemo(() => assessProject(form), [form]);
@@ -264,6 +271,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
     .slice(0, 2)
     .toUpperCase();
   const selectedProposal = proposalRecords.find((record) => record.id === selectedProposalId) ?? null;
+  const selectedClient = clientRecords.find((record) => record.id === selectedClientId) ?? null;
 
   useEffect(() => {
     let active = true;
@@ -272,6 +280,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
     void loadWorkspaceData(createClient(), user.id)
       .then((data) => {
         if (!active) return;
+        setClientRecords(data.clients);
         setAssessmentRecords(data.assessments);
         setProposalRecords(data.proposals);
       })
@@ -307,6 +316,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
       const supabase = createClient();
       await saveAssessmentAndProposal(supabase, user.id, form, assessment);
       const data = await loadWorkspaceData(supabase, user.id);
+      setClientRecords(data.clients);
       setAssessmentRecords(data.assessments);
       setProposalRecords(data.proposals);
       setProposalCreated(true);
@@ -322,6 +332,42 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
     setSelectedProposalId(proposalId);
     setSaveError("");
     setView("proposal-detail");
+  }
+
+  function openClient(clientId: string) {
+    setSelectedClientId(clientId);
+    setSaveError("");
+    setView("client-detail");
+  }
+
+  function startAssessmentForClient(client: ClientRecord) {
+    setForm({
+      ...initialForm,
+      clientName: client.name,
+      clientEmail: client.email ?? "",
+    });
+    setStep(1);
+    setProposalCreated(false);
+    setSaveError("");
+    setView("assess");
+  }
+
+  async function saveClient(input: ClientUpdateInput) {
+    if (!selectedClient) return;
+    setClientSaving(true);
+    setSaveError("");
+
+    try {
+      const updated = await updateClientDetails(createClient(), user.id, selectedClient.id, input);
+      setClientRecords((current) => current.map((client) => client.id === updated.id ? updated : client));
+      setAssessmentRecords((current) => current.map((record) => record.clientId === updated.id ? { ...record, clientName: updated.name } : record));
+      setProposalRecords((current) => current.map((record) => record.clientId === updated.id ? { ...record, clientName: updated.name, clientEmail: updated.email } : record));
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to save client details.");
+      throw error;
+    } finally {
+      setClientSaving(false);
+    }
   }
 
   async function changeProposalStatus(status: ProposalRecord["status"]) {
@@ -352,7 +398,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
         <nav className="nav-list" aria-label="Primary navigation">
           <p className="nav-label">Workspace</p>
           {navItems.map((item) => (
-            <button key={item.id} className={view === item.id ? "nav-item active" : "nav-item"} onClick={() => setView(item.id)}>
+            <button key={item.id} className={view === item.id || (view === "client-detail" && item.id === "clients") || (view === "proposal-detail" && item.id === "proposals") ? "nav-item active" : "nav-item"} onClick={() => setView(item.id)}>
               <span>{item.short}</span>{item.label}
             </button>
           ))}
@@ -373,7 +419,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
 
       <section className="workspace">
         <header className="topbar">
-          <div><span className="eyebrow">ScopeGrade AI</span><h1>{view === "proposal-detail" ? "Proposal details" : navItems.find((item) => item.id === view)?.label}</h1></div>
+          <div><span className="eyebrow">ScopeGrade AI</span><h1>{view === "proposal-detail" ? "Proposal details" : view === "client-detail" ? "Client profile" : navItems.find((item) => item.id === view)?.label}</h1></div>
           <div className="topbar-actions">
             <span className="status-pill"><i /> Rule set v1.0</span>
             <button className="new-button" onClick={() => { setView("assess"); resetAssessment(); }}><span>+</span> New project</button>
@@ -381,6 +427,8 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
         </header>
 
         {view === "assess" && <AssessmentView step={step} setStep={setStep} form={form} update={update} assessment={assessment} resetAssessment={resetAssessment} createProposal={createProposal} saving={saving} saveError={saveError} />}
+        {view === "clients" && <ClientsView clients={clientRecords} assessments={assessmentRecords} proposals={proposalRecords} loading={dataLoading} onOpen={openClient} onNewAssessment={() => { setForm(initialForm); setStep(1); setView("assess"); }} />}
+        {view === "client-detail" && selectedClient && <ClientDetailView client={selectedClient} assessments={assessmentRecords.filter((record) => record.clientId === selectedClient.id)} proposals={proposalRecords.filter((record) => record.clientId === selectedClient.id)} onBack={() => setView("clients")} onStartAssessment={() => startAssessmentForClient(selectedClient)} onOpenProposal={openProposal} onSave={saveClient} saving={clientSaving} error={saveError} />}
         {view === "dashboard" && <DashboardView setView={setView} setStep={setStep} records={assessmentRecords} loading={dataLoading} />}
         {view === "proposals" && <ProposalsView proposalCreated={proposalCreated} records={proposalRecords} setView={setView} loading={dataLoading} onOpen={openProposal} />}
         {view === "proposal-detail" && selectedProposal && <ProposalDetailView record={selectedProposal} ownerName={displayName} ownerEmail={user.email ?? ""} onBack={() => setView("proposals")} onChangeStatus={changeProposalStatus} updating={statusUpdating} error={saveError} />}
@@ -547,6 +595,163 @@ function DashboardView({ setView, setStep, records, loading }: {
 
 function Stat({ label, value, change, accent = false }: { label: string; value: string; change: string; accent?: boolean }) {
   return <article className={accent ? "stat-card accent" : "stat-card"}><span>{label}</span><strong>{value}</strong><small>{change}</small></article>;
+}
+
+function ClientsView({ clients, assessments, proposals, loading, onOpen, onNewAssessment }: {
+  clients: ClientRecord[];
+  assessments: AssessmentRecord[];
+  proposals: ProposalRecord[];
+  loading: boolean;
+  onOpen: (clientId: string) => void;
+  onNewAssessment: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const normalizedSearch = search.trim().toLowerCase();
+  const visibleClients = clients.filter((client) => (
+    !normalizedSearch || [client.name, client.company, client.email, client.phone]
+      .some((value) => value?.toLowerCase().includes(normalizedSearch))
+  ));
+  const totalQuoted = proposals.reduce((total, proposal) => total + proposal.value, 0);
+  const activeProposals = proposals.filter((proposal) => ["draft", "sent", "viewed"].includes(proposal.status)).length;
+
+  return (
+    <div className="content-wrap clients-page">
+      <div className="dashboard-welcome">
+        <div><span className="section-kicker">Client workspace</span><h2>Every relationship, scope and proposal.</h2><p>Keep client details and project history together from the first assessment to approval.</p></div>
+        <button className="primary-button" onClick={onNewAssessment}>New assessment <span>→</span></button>
+      </div>
+
+      <div className="client-summary">
+        <Stat label="Clients" value={loading ? "—" : String(clients.length)} change="Saved contacts" />
+        <Stat label="Assessments" value={loading ? "—" : String(assessments.length)} change="Qualified projects" />
+        <Stat label="Active proposals" value={loading ? "—" : String(activeProposals)} change="Draft, sent or viewed" />
+        <Stat label="Total quoted" value={loading ? "—" : money(totalQuoted)} change="Across all clients" accent />
+      </div>
+
+      <section className="client-directory">
+        <div className="client-directory-toolbar">
+          <div><span className="section-kicker">Directory</span><h3>All clients</h3></div>
+          <label className="client-search"><span aria-hidden="true">⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, company or email" aria-label="Search clients" /></label>
+        </div>
+
+        {loading ? (
+          <div className="empty-state"><span className="auth-spinner" /><strong>Loading clients…</strong></div>
+        ) : clients.length === 0 ? (
+          <div className="empty-state"><span>SG</span><strong>No clients yet</strong><p>Your first client is created automatically when you save an assessment.</p><button className="primary-button" onClick={onNewAssessment}>Create first assessment</button></div>
+        ) : visibleClients.length === 0 ? (
+          <div className="empty-state compact"><span>⌕</span><strong>No matching clients</strong><p>Try a different name, company, email or phone number.</p></div>
+        ) : (
+          <div className="client-list">
+            {visibleClients.map((client) => {
+              const clientAssessments = assessments.filter((record) => record.clientId === client.id);
+              const clientProposals = proposals.filter((record) => record.clientId === client.id);
+              const quoted = clientProposals.reduce((total, proposal) => total + proposal.value, 0);
+              const initials = client.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+              return (
+                <article className="client-row" key={client.id}>
+                  <button className="client-identity" onClick={() => onOpen(client.id)}>
+                    <span className="client-avatar">{initials || "CL"}</span>
+                    <span><strong>{client.name}</strong><small>{client.company || client.email || "Contact details not added"}</small></span>
+                  </button>
+                  <div className="client-contact"><span>Contact</span><strong>{client.email || "No email"}</strong><small>{client.phone || "No phone"}</small></div>
+                  <div className="client-metric"><span>Activity</span><strong>{clientAssessments.length} assessment{clientAssessments.length === 1 ? "" : "s"}</strong><small>{clientProposals.length} proposal{clientProposals.length === 1 ? "" : "s"}</small></div>
+                  <div className="client-metric"><span>Quoted</span><strong>{money(quoted)}</strong><small>Since {shortDate(client.createdAt)}</small></div>
+                  <button className="client-open-button" onClick={() => onOpen(client.id)}>Open client <span>→</span></button>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ClientDetailView({ client, assessments, proposals, onBack, onStartAssessment, onOpenProposal, onSave, saving, error }: {
+  client: ClientRecord;
+  assessments: AssessmentRecord[];
+  proposals: ProposalRecord[];
+  onBack: () => void;
+  onStartAssessment: () => void;
+  onOpenProposal: (proposalId: string) => void;
+  onSave: (input: ClientUpdateInput) => Promise<void>;
+  saving: boolean;
+  error: string;
+}) {
+  const [details, setDetails] = useState<ClientUpdateInput>({ name: client.name, company: client.company ?? "", email: client.email ?? "", phone: client.phone ?? "", notes: client.notes ?? "" });
+  const [saved, setSaved] = useState(false);
+  const initials = client.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const totalQuoted = proposals.reduce((total, proposal) => total + proposal.value, 0);
+  const acceptedValue = proposals.filter((proposal) => proposal.status === "accepted").reduce((total, proposal) => total + proposal.value, 0);
+
+  useEffect(() => {
+    setDetails({ name: client.name, company: client.company ?? "", email: client.email ?? "", phone: client.phone ?? "", notes: client.notes ?? "" });
+    setSaved(false);
+  }, [client]);
+
+  function updateDetail(key: keyof ClientUpdateInput, value: string) {
+    setDetails((current) => ({ ...current, [key]: value }));
+    setSaved(false);
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!details.name.trim()) return;
+    try {
+      await onSave(details);
+      setSaved(true);
+    } catch {
+      setSaved(false);
+    }
+  }
+
+  return (
+    <div className="content-wrap client-detail-page">
+      <div className="client-detail-toolbar"><button className="secondary-button" onClick={onBack}>← Back to clients</button><button className="primary-button" onClick={onStartAssessment}>New assessment <span>→</span></button></div>
+
+      <section className="client-profile-hero">
+        <span className="client-profile-avatar">{initials || "CL"}</span>
+        <div><span className="section-kicker">Client profile</span><h2>{client.name}</h2><p>{client.company || client.email || "Add company and contact information below."}</p></div>
+        <div className="client-profile-since"><span>Client since</span><strong>{fullDate(client.createdAt)}</strong></div>
+      </section>
+
+      <div className="client-detail-stats"><Stat label="Assessments" value={String(assessments.length)} change="Qualified projects" /><Stat label="Proposals" value={String(proposals.length)} change="Created documents" /><Stat label="Total quoted" value={money(totalQuoted)} change="Potential project value" /><Stat label="Accepted" value={money(acceptedValue)} change="Approved proposal value" accent /></div>
+
+      <div className="client-detail-grid">
+        <form className="client-edit-card" onSubmit={(event) => void submit(event)}>
+          <div className="client-card-heading"><div><span className="section-kicker">Contact record</span><h3>Client details</h3></div><span>Editable</span></div>
+          <div className="field-grid">
+            <label className="field"><span>Client name</span><input value={details.name} onChange={(event) => updateDetail("name", event.target.value)} required /></label>
+            <label className="field"><span>Company</span><input value={details.company} onChange={(event) => updateDetail("company", event.target.value)} placeholder="Company name" /></label>
+            <label className="field"><span>Email address</span><input type="email" value={details.email} onChange={(event) => updateDetail("email", event.target.value)} placeholder="client@company.com" /></label>
+            <label className="field"><span>Phone number</span><input type="tel" value={details.phone} onChange={(event) => updateDetail("phone", event.target.value)} placeholder="(555) 000-0000" /></label>
+            <label className="field full"><span>Internal notes</span><textarea value={details.notes} onChange={(event) => updateDetail("notes", event.target.value)} placeholder="Decision makers, preferences, follow-up notes…" /></label>
+          </div>
+          {saved && !error && <p className="client-save-success"><span>✓</span> Client details saved.</p>}
+          {error && <p className="save-error" role="alert">{error}</p>}
+          <div className="client-form-actions"><small>Changes are stored securely in your Supabase workspace.</small><button className="primary-button" type="submit" disabled={saving || !details.name.trim()}>{saving ? "Saving…" : "Save client"} {!saving && <span>→</span>}</button></div>
+        </form>
+
+        <aside className="client-quick-card">
+          <span className="section-kicker">Quick contact</span><h3>Reach {client.name.split(" ")[0]}</h3>
+          <dl><div><dt>Email</dt><dd>{client.email ? <a href={`mailto:${client.email}`}>{client.email}</a> : "Not added"}</dd></div><div><dt>Phone</dt><dd>{client.phone ? <a href={`tel:${client.phone}`}>{client.phone}</a> : "Not added"}</dd></div><div><dt>Company</dt><dd>{client.company || "Not added"}</dd></div></dl>
+          <button className="secondary-button" onClick={onStartAssessment}>Start project for this client</button>
+        </aside>
+      </div>
+
+      <section className="client-history-grid">
+        <article className="client-history-card">
+          <div className="client-card-heading"><div><span className="section-kicker">Qualification history</span><h3>Assessments</h3></div><span>{assessments.length}</span></div>
+          {assessments.length === 0 ? <div className="client-mini-empty"><strong>No assessments yet</strong><p>Start a new project to build this client&apos;s scope history.</p></div> : <div className="client-history-list">{assessments.map((record) => <div key={record.id}><span className="table-grade">{record.grade}</span><p><strong>{record.projectName}</strong><small>{record.packageName} · {shortDate(record.createdAt)}</small></p><b>{money(record.price)}</b></div>)}</div>}
+        </article>
+
+        <article className="client-history-card">
+          <div className="client-card-heading"><div><span className="section-kicker">Sales history</span><h3>Proposals</h3></div><span>{proposals.length}</span></div>
+          {proposals.length === 0 ? <div className="client-mini-empty"><strong>No proposals yet</strong><p>Saving an assessment creates a proposal draft automatically.</p></div> : <div className="client-history-list proposal-history">{proposals.map((record) => <button key={record.id} onClick={() => onOpenProposal(record.id)}><span className={`proposal-status ${record.status}`}>{record.status}</span><p><strong>{record.title}</strong><small>{record.proposalNumber} · {shortDate(record.createdAt)}</small></p><b>{money(record.value)} <em>→</em></b></button>)}</div>}
+        </article>
+      </section>
+    </div>
+  );
 }
 
 function ProposalsView({ proposalCreated, records, setView, loading, onOpen }: {
