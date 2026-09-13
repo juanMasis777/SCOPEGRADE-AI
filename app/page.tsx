@@ -11,6 +11,7 @@ import {
   loadWorkspaceData,
   type ProposalRecord,
   saveAssessmentAndProposal,
+  setProposalSharing as updateProposalSharing,
   updateClientDetails,
   updateProposalStatus,
 } from "../utils/supabase/workspace";
@@ -259,6 +260,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
   const [saving, setSaving] = useState(false);
   const [clientSaving, setClientSaving] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [shareUpdating, setShareUpdating] = useState(false);
   const [saveError, setSaveError] = useState("");
   const assessment = useMemo(() => assessProject(form), [form]);
   const displayName = typeof user.user_metadata.full_name === "string" && user.user_metadata.full_name.trim()
@@ -387,6 +389,37 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
     }
   }
 
+  async function changeProposalSharing(enabled: boolean) {
+    if (!selectedProposal) return;
+    setShareUpdating(true);
+    setSaveError("");
+
+    try {
+      const result = await updateProposalSharing(
+        createClient(),
+        user.id,
+        selectedProposal.id,
+        selectedProposal.status,
+        enabled,
+      );
+      setProposalRecords((current) => current.map((record) => (
+        record.id === selectedProposal.id
+          ? {
+              ...record,
+              publicToken: result.publicToken,
+              publicEnabled: result.publicEnabled,
+              sharedAt: result.sharedAt,
+              status: result.status,
+            }
+          : record
+      )));
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to update proposal sharing.");
+    } finally {
+      setShareUpdating(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -431,7 +464,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
         {view === "client-detail" && selectedClient && <ClientDetailView client={selectedClient} assessments={assessmentRecords.filter((record) => record.clientId === selectedClient.id)} proposals={proposalRecords.filter((record) => record.clientId === selectedClient.id)} onBack={() => setView("clients")} onStartAssessment={() => startAssessmentForClient(selectedClient)} onOpenProposal={openProposal} onSave={saveClient} saving={clientSaving} error={saveError} />}
         {view === "dashboard" && <DashboardView setView={setView} setStep={setStep} records={assessmentRecords} loading={dataLoading} />}
         {view === "proposals" && <ProposalsView proposalCreated={proposalCreated} records={proposalRecords} setView={setView} loading={dataLoading} onOpen={openProposal} />}
-        {view === "proposal-detail" && selectedProposal && <ProposalDetailView record={selectedProposal} ownerName={displayName} ownerEmail={user.email ?? ""} onBack={() => setView("proposals")} onChangeStatus={changeProposalStatus} updating={statusUpdating} error={saveError} />}
+        {view === "proposal-detail" && selectedProposal && <ProposalDetailView record={selectedProposal} ownerName={displayName} ownerEmail={user.email ?? ""} onBack={() => setView("proposals")} onChangeStatus={changeProposalStatus} onChangeSharing={changeProposalSharing} updating={statusUpdating} shareUpdating={shareUpdating} error={saveError} />}
         {view === "rules" && <RulesView />}
       </section>
     </main>
@@ -783,15 +816,19 @@ function ProposalCard({ status, title, client, value, date, featured = false, on
   return <article className={featured ? "proposal-card featured" : "proposal-card"}><div className="proposal-card-top"><span className={`proposal-status ${status}`}>{statusLabel}</span><span>{date}</span></div><div className="proposal-client"><span>{client.split(" ").map((part) => part[0]).join("").slice(0,2).toUpperCase()}</span><div><strong>{title}</strong><small>{client}</small></div></div><div className="proposal-value"><span>Proposed investment</span><strong>{money(value)}</strong></div><div className="proposal-actions"><button onClick={onOpen}>Open proposal</button><button className="icon-button" aria-label="More proposal actions">•••</button></div></article>;
 }
 
-function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeStatus, updating, error }: {
+function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeStatus, onChangeSharing, updating, shareUpdating, error }: {
   record: ProposalRecord;
   ownerName: string;
   ownerEmail: string;
   onBack: () => void;
   onChangeStatus: (status: ProposalRecord["status"]) => Promise<void>;
+  onChangeSharing: (enabled: boolean) => Promise<void>;
   updating: boolean;
+  shareUpdating: boolean;
   error: string;
 }) {
+  const [origin, setOrigin] = useState("");
+  const [copied, setCopied] = useState(false);
   const statusLabel = record.status.charAt(0).toUpperCase() + record.status.slice(1);
   const created = new Date(record.createdAt);
   const fallbackExpiry = new Date(created.getTime() + 14 * 24 * 60 * 60 * 1000);
@@ -804,6 +841,26 @@ function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeSta
       ? "accepted"
       : null;
   const nextStatusLabel = nextStatus === "sent" ? "Mark as sent" : "Mark as accepted";
+  const sharePath = record.publicToken ? `/proposal/${record.publicToken}` : "";
+  const shareUrl = origin && sharePath ? `${origin}${sharePath}` : sharePath;
+
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+
+  useEffect(() => {
+    setCopied(false);
+  }, [record.publicEnabled, record.publicToken]);
+
+  async function copyShareLink() {
+    if (!record.publicToken) return;
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/proposal/${record.publicToken}`);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
 
   return (
     <div className="content-wrap proposal-detail-page">
@@ -811,11 +868,23 @@ function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeSta
         <button className="secondary-button" onClick={onBack}>← Back to proposals</button>
         <div>
           <button className="secondary-button" onClick={() => window.print()}>Download / Print PDF</button>
+          {!record.publicEnabled && <button className="secondary-button" disabled={shareUpdating} onClick={() => void onChangeSharing(true)}>{shareUpdating ? "Creating link…" : "Create share link"}</button>}
           {nextStatus && <button className="primary-button" disabled={updating} onClick={() => void onChangeStatus(nextStatus)}>{updating ? "Updating…" : nextStatusLabel} {!updating && <span>→</span>}</button>}
         </div>
       </div>
 
       {error && <p className="save-error print-hidden" role="alert">{error}</p>}
+
+      {record.publicEnabled && record.publicToken && (
+        <section className="proposal-share-panel print-hidden" aria-label="Public proposal link">
+          <div className="proposal-share-status"><span>✓</span><p><strong>Public link is active</strong><small>Anyone with this private link can view the proposal without signing in.</small></p></div>
+          <div className="proposal-share-controls">
+            <input value={shareUrl} readOnly aria-label="Public proposal link" onFocus={(event) => event.currentTarget.select()} />
+            <button className="primary-button" type="button" onClick={() => void copyShareLink()}>{copied ? "Copied!" : "Copy link"}</button>
+            <button className="share-revoke-button" type="button" disabled={shareUpdating} onClick={() => void onChangeSharing(false)}>{shareUpdating ? "Updating…" : "Revoke"}</button>
+          </div>
+        </section>
+      )}
 
       <article className="proposal-paper">
         <header className="proposal-document-header">

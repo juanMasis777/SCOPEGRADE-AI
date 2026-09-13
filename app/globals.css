@@ -395,6 +395,18 @@ td small { margin-top: 4px; color: #8a95a5; font-size: 8px; }
 .proposal-detail-page { max-width: 1160px; padding-top: 26px; }
 .proposal-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 18px; }
 .proposal-toolbar > div { display: flex; gap: 9px; }
+.proposal-share-panel { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(360px, 1.2fr); align-items: center; gap: 20px; max-width: 980px; margin: 0 auto 18px; padding: 16px; border: 1px solid #cfe2a4; border-radius: 15px; background: linear-gradient(135deg, #fbfff4, #f3f9e8); box-shadow: 0 10px 28px rgba(101,133,31,.07); }
+.proposal-share-status { display: flex; align-items: center; gap: 11px; }
+.proposal-share-status > span { display: grid; place-items: center; flex: 0 0 auto; width: 31px; height: 31px; border-radius: 9px; background: var(--lime); color: #355006; font-size: 11px; font-weight: 900; }
+.proposal-share-status p, .proposal-share-status strong, .proposal-share-status small { display: block; margin: 0; }
+.proposal-share-status strong { font-size: 11px; }
+.proposal-share-status small { margin-top: 4px; color: #708054; font-size: 9px; line-height: 1.45; }
+.proposal-share-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
+.proposal-share-controls input { min-width: 0; height: 40px; padding: 0 12px; border: 1px solid #d4dfbf; border-radius: 9px; outline: none; background: white; color: #4d5b3c; font-size: 10px; }
+.proposal-share-controls input:focus { border-color: #9bbf49; box-shadow: 0 0 0 3px rgba(200,255,69,.16); }
+.proposal-share-controls .primary-button, .share-revoke-button { min-height: 40px; padding: 0 13px; white-space: nowrap; }
+.share-revoke-button { border: 1px solid #d8dfcd; border-radius: 10px; background: white; color: #6d765f; font-size: 10px; font-weight: 800; }
+.share-revoke-button:hover:not(:disabled) { color: #9a3840; border-color: #ebc8cb; background: #fff7f7; }
 .proposal-paper { max-width: 980px; margin: 0 auto; overflow: hidden; border: 1px solid #dce2e8; border-radius: 20px; background: white; box-shadow: 0 24px 65px rgba(22,39,59,.09); }
 .proposal-document-header { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 30px 34px; color: white; background: var(--navy); }
 .proposal-document-brand { display: flex; align-items: center; gap: 12px; }
@@ -448,6 +460,64 @@ td small { margin-top: 4px; color: #8a95a5; font-size: 8px; }
 .proposal-legal { margin: 24px 0 0; padding-top: 18px; border-top: 1px solid #e7ebef; color: #8792a1; font-size: 8px; line-height: 1.65; }
 .proposal-document-footer { display: flex; justify-content: space-between; gap: 20px; padding: 18px 44px; border-top: 1px solid #e7ebef; color: #8894a4; background: #f8fafb; font-size: 7px; text-transform: uppercase; letter-spacing: .1em; font-weight: 800; }
 
+/* Public proposal */
+.public-proposal-shell { min-height: 100vh; padding-bottom: 64px; background: radial-gradient(circle at 80% 0%, rgba(84,216,230,.1), transparent 28%), linear-gradient(180deg, #eef3f6 0, #f7f9fa 460px, #f3f6f8 100%); }
+.public-proposal-topbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 76px; padding: 14px max(24px, calc((100vw - 1080px) / 2)); border-bottom: 1px solid rgba(209,218,226,.8); background: rgba(255,255,255,.86); backdrop-filter: blur(16px); }
+.public-proposal-brand { display: flex; align-items: center; gap: 11px; }
+.public-proposal-brand > span { display: grid; place-items: center; width: 39px; height: 39px; border-radius: 12px; background: var(--navy); color: var(--lime); font-size: 11px; font-weight: 900; }
+.public-proposal-brand p, .public-proposal-brand strong, .public-proposal-brand small { display: block; margin: 0; }
+.public-proposal-brand strong { font-size: 15px; letter-spacing: -.025em; }
+.public-proposal-brand small { margin-top: 3px; color: #7a8797; font-size: 12px; }
+.public-proposal-actions { display: flex; align-items: center; gap: 10px; }
+.public-proposal-actions > span { display: inline-flex; align-items: center; gap: 7px; color: #607083; font-size: 13px; font-weight: 700; }
+.public-proposal-actions i { width: 7px; height: 7px; border-radius: 50%; background: #74b42c; box-shadow: 0 0 0 4px rgba(116,180,44,.1); }
+.public-proposal-actions button { min-height: 42px; padding: 0 15px; border: 0; border-radius: 10px; background: var(--navy); color: white; font-size: 13px; font-weight: 800; }
+.public-proposal-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 40px; width: min(calc(100% - 48px), 1080px); margin: 0 auto; padding: 54px 0 28px; }
+.public-proposal-intro > div > span { color: #68768a; font-size: 12px; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; }
+.public-proposal-intro h1 { margin: 12px 0 9px; font-size: clamp(36px, 5vw, 58px); line-height: 1; letter-spacing: -.06em; }
+.public-proposal-intro p { max-width: 680px; margin: 0; color: #69778a; font-size: 16px; line-height: 1.65; }
+.public-proposal-intro aside { flex: 0 0 auto; min-width: 190px; padding: 17px; border: 1px solid #dae2e8; border-radius: 14px; background: rgba(255,255,255,.75); }
+.public-proposal-intro aside small, .public-proposal-intro aside strong { display: block; }
+.public-proposal-intro aside small { color: #8290a1; font-size: 12px; }
+.public-proposal-intro aside strong { margin: 7px 0 12px; font-size: 14px; }
+.public-proposal-paper { max-width: 1080px; }
+.public-proposal-paper .proposal-document-brand strong { font-size: 16px; }
+.public-proposal-paper .proposal-document-brand small, .public-proposal-paper .proposal-document-meta span, .public-proposal-paper .proposal-document-meta small { font-size: 11px; }
+.public-proposal-paper .proposal-document-meta strong { font-size: 13px; }
+.public-proposal-paper .proposal-document-hero > div > span { font-size: 11px; }
+.public-proposal-paper .proposal-document-hero p { font-size: 15px; }
+.public-proposal-paper .proposal-status { font-size: 12px; }
+.public-proposal-paper .proposal-parties span { font-size: 11px; }
+.public-proposal-paper .proposal-parties strong { font-size: 15px; }
+.public-proposal-paper .proposal-parties p { font-size: 13px; }
+.public-proposal-paper .proposal-section-heading small { font-size: 11px; }
+.public-proposal-paper .proposal-section-heading h3 { font-size: 21px; }
+.public-proposal-paper .proposal-section-heading b { font-size: 11px; }
+.public-proposal-paper .proposal-intro { font-size: 15px; }
+.public-proposal-paper .proposal-scope-list li { font-size: 14px; }
+.public-proposal-paper .proposal-addons small { font-size: 11px; }
+.public-proposal-paper .proposal-addons p { font-size: 14px; }
+.public-proposal-paper .proposal-investment span { font-size: 11px; }
+.public-proposal-paper .proposal-investment strong { font-size: 25px; }
+.public-proposal-paper .proposal-investment p { font-size: 12px; }
+.public-proposal-paper .proposal-terms li strong { font-size: 14px; }
+.public-proposal-paper .proposal-terms li small { font-size: 12px; }
+.public-proposal-paper .proposal-legal { font-size: 12px; }
+.public-proposal-paper .proposal-document-footer { font-size: 10px; }
+.public-proposal-message { margin: 28px 44px 0; padding: 18px 20px; border-left: 4px solid var(--lime); border-radius: 0 12px 12px 0; background: #f6f9ef; }
+.public-proposal-message span { color: #6c7a56; font-size: 11px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.public-proposal-message p { margin: 9px 0 0; color: #536044; font-size: 14px; line-height: 1.65; }
+.public-proposal-contact { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: min(calc(100% - 48px), 1080px); margin: 22px auto 0; padding: 20px 22px; border: 1px solid #d9e1e7; border-radius: 15px; background: white; box-shadow: 0 12px 36px rgba(30,48,69,.06); }
+.public-proposal-contact span, .public-proposal-contact strong { display: block; }
+.public-proposal-contact > div span { color: #788697; font-size: 12px; }
+.public-proposal-contact > div strong { margin-top: 5px; font-size: 16px; }
+.public-proposal-contact a { display: inline-flex; align-items: center; gap: 18px; min-height: 44px; padding: 0 16px; border-radius: 10px; background: var(--navy); color: white; font-size: 13px; font-weight: 800; text-decoration: none; }
+.public-proposal-contact a span { color: var(--lime); font-size: 17px; }
+.public-proposal-state { min-height: 100vh; display: grid; place-items: center; align-content: center; gap: 12px; padding: 28px; background: var(--navy); color: white; text-align: center; }
+.public-proposal-state strong { font-size: 22px; }
+.public-proposal-state p { max-width: 480px; margin: 0; color: #8494a9; font-size: 15px; line-height: 1.6; }
+.public-proposal-error > span { display: grid; place-items: center; width: 54px; height: 54px; margin-bottom: 5px; border-radius: 15px; background: var(--lime); color: var(--navy); font-size: 14px; font-weight: 900; }
+
 .rules-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
 .rule-card { position: relative; overflow: hidden; padding: 22px; background: white; border: 1px solid var(--line); border-radius: 17px; }
 .rule-card::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: var(--lime); }
@@ -495,12 +565,23 @@ td small { margin-top: 4px; color: #8a95a5; font-size: 8px; }
   .field-grid, .number-grid, .toggle-grid, .result-grid, .rules-grid, .proposal-grid { grid-template-columns: 1fr; }
   .proposal-toolbar, .proposal-document-hero { align-items: stretch; flex-direction: column; }
   .proposal-toolbar > div { display: grid; grid-template-columns: 1fr; }
+  .proposal-share-panel { grid-template-columns: 1fr; }
+  .proposal-share-controls { grid-template-columns: minmax(0, 1fr) auto; }
+  .proposal-share-controls .share-revoke-button { grid-column: 1 / -1; }
   .proposal-parties, .proposal-investment, .proposal-terms ol, .proposal-scope-list { grid-template-columns: 1fr; }
   .proposal-parties > div { padding: 18px 0; }
   .proposal-parties > div + div { padding-left: 0; border-left: 0; border-top: 1px solid #e7ebef; }
   .proposal-document-header, .proposal-document-hero, .proposal-document-section { padding-left: 24px; padding-right: 24px; }
   .proposal-parties, .proposal-investment { margin-left: 24px; margin-right: 24px; }
   .proposal-document-footer { padding-left: 24px; padding-right: 24px; }
+  .public-proposal-topbar { padding-inline: 18px; }
+  .public-proposal-actions > span { display: none; }
+  .public-proposal-intro { align-items: stretch; flex-direction: column; width: min(calc(100% - 36px), 1080px); padding-top: 36px; }
+  .public-proposal-intro aside { min-width: 0; }
+  .public-proposal-paper { width: calc(100% - 36px); }
+  .public-proposal-message { margin-left: 24px; margin-right: 24px; }
+  .public-proposal-contact { align-items: stretch; flex-direction: column; width: calc(100% - 36px); }
+  .public-proposal-contact a { justify-content: space-between; }
   .type-grid { grid-template-columns: repeat(2, 1fr); }
   .client-directory-toolbar, .client-profile-hero, .client-form-actions { align-items: stretch; flex-direction: column; }
   .client-search { width: 100%; }
@@ -535,6 +616,11 @@ td small { margin-top: 4px; color: #8a95a5; font-size: 8px; }
   .client-open-button span { margin: 0; font-size: 14px; }
   .client-detail-toolbar { display: grid; grid-template-columns: 1fr; }
   .client-detail-toolbar button { width: 100%; }
+  .proposal-share-controls { grid-template-columns: 1fr; }
+  .proposal-share-controls .share-revoke-button { grid-column: auto; }
+  .public-proposal-actions button { padding-inline: 12px; font-size: 12px; }
+  .public-proposal-brand small { display: none; }
+  .public-proposal-intro h1 { font-size: 38px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -549,6 +635,7 @@ td small { margin-top: 4px; color: #8a95a5; font-size: 8px; }
   .app-shell, .workspace { display: block !important; min-height: 0; }
   .proposal-detail-page { width: 100%; max-width: none; padding: 0; }
   .proposal-paper { width: 100%; max-width: none; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+  .public-proposal-shell { min-height: 0; padding: 0; background: white !important; }
   .proposal-document-header { padding: 24px 28px; }
   .proposal-document-hero { padding: 28px 30px 24px; }
   .proposal-document-hero h2 { font-size: 34px; }
