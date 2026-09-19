@@ -1,32 +1,35 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  type Assessment,
+  DEFAULT_DEPOSIT_PERCENTAGE,
+  CARE_PLAN_MONTHLY,
+  defaultValidUntil,
+  depositAmount,
+  type Grade,
+  type PackageName,
+  type ProjectInput,
+} from "../../lib/pricing";
 
-export type ProjectFormInput = {
-  projectName: string;
-  clientName: string;
-  clientEmail: string;
-  projectType: "landing" | "business" | "ecommerce" | "webapp";
-  pages: number;
-  sections: number;
-  contentReady: boolean;
-  bilingual: boolean;
-  booking: boolean;
-  payments: boolean;
-  clientLogin: boolean;
-  customDesign: boolean;
-  rush: boolean;
-  maintenance: boolean;
-  notes: string;
+export type { Assessment, ProjectInput };
+
+export type ProposalStatus =
+  | "draft"
+  | "sent"
+  | "viewed"
+  | "accepted"
+  | "declined"
+  | "expired";
+
+export type ProfileRecord = {
+  id: string;
+  email: string | null;
+  fullName: string | null;
+  businessName: string | null;
 };
 
-export type AssessmentInput = {
-  packageName: "Promotional" | "Professional" | "Custom";
-  grade: "A" | "B" | "C";
-  price: number;
-  range: string;
-  score: number;
-  reasons: string[];
-  included: string[];
-  extras: string[];
+export type ProfileUpdateInput = {
+  fullName: string;
+  businessName: string;
 };
 
 export type AssessmentRecord = {
@@ -34,9 +37,9 @@ export type AssessmentRecord = {
   clientId: string | null;
   clientName: string;
   projectName: string;
-  packageName: "Promotional" | "Professional" | "Custom";
+  packageName: PackageName;
   price: number;
-  grade: "A" | "B" | "C";
+  grade: Grade;
   createdAt: string;
 };
 
@@ -47,7 +50,7 @@ export type ProposalRecord = {
   clientEmail: string | null;
   title: string;
   proposalNumber: string;
-  status: "draft" | "sent" | "viewed" | "accepted" | "declined" | "expired";
+  status: ProposalStatus;
   value: number;
   maintenanceMonthly: number;
   depositPercentage: number;
@@ -56,19 +59,35 @@ export type ProposalRecord = {
   addOns: string[];
   clientMessage: string | null;
   validUntil: string | null;
-  packageName: "Promotional" | "Professional" | "Custom" | null;
-  grade: "A" | "B" | "C" | null;
+  packageName: PackageName | null;
+  grade: Grade | null;
   publicToken: string | null;
   publicEnabled: boolean;
   sharedAt: string | null;
   viewedAt: string | null;
+  acceptedAt: string | null;
+  acceptedByName: string | null;
+  declinedAt: string | null;
+  declineReason: string | null;
   createdAt: string;
+};
+
+/** Fields the owner can change on a saved proposal before or after sharing it. */
+export type ProposalEditInput = {
+  title: string;
+  value: number;
+  depositPercentage: number;
+  maintenanceMonthly: number;
+  validUntil: string;
+  clientMessage: string;
+  scopeItems: string[];
+  addOns: string[];
 };
 
 export type PublicProposalRecord = {
   proposalNumber: string;
   title: string;
-  status: ProposalRecord["status"];
+  status: ProposalStatus;
   currency: string;
   value: number;
   maintenanceMonthly: number;
@@ -83,8 +102,11 @@ export type PublicProposalRecord = {
   ownerName: string;
   ownerEmail: string | null;
   businessName: string;
-  packageName: ProposalRecord["packageName"];
-  grade: ProposalRecord["grade"];
+  packageName: PackageName | null;
+  grade: Grade | null;
+  acceptedAt: string | null;
+  acceptedByName: string | null;
+  declinedAt: string | null;
   createdAt: string;
 };
 
@@ -106,6 +128,11 @@ export type ClientUpdateInput = {
   notes: string;
 };
 
+const PROPOSAL_SELECT =
+  "id, client_id, proposal_number, title, status, subtotal, maintenance_monthly, deposit_percentage, deposit_amount, scope_items, add_ons, client_message, valid_until, public_token, public_enabled, shared_at, viewed_at, accepted_at, accepted_by_name, declined_at, decline_reason, created_at, clients(name, email), assessments(package_name, grade)";
+
+const CLIENT_SELECT = "id, name, company, email, phone, notes, created_at";
+
 type ClientRelation = { name: string; email?: string | null } | Array<{ name: string; email?: string | null }> | null;
 type AssessmentRelation = { package_name: string; grade: string } | Array<{ package_name: string; grade: string }> | null;
 
@@ -117,19 +144,73 @@ function relatedClient(relation: ClientRelation) {
 function relatedAssessment(relation: AssessmentRelation) {
   const assessment = Array.isArray(relation) ? relation[0] : relation;
   return {
-    packageName: (assessment?.package_name ?? null) as ProposalRecord["packageName"],
-    grade: (assessment?.grade ?? null) as ProposalRecord["grade"],
+    packageName: (assessment?.package_name ?? null) as PackageName | null,
+    grade: (assessment?.grade ?? null) as Grade | null,
+  };
+}
+
+function strings(value: unknown) {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+function mapClient(row: Record<string, never> | { [key: string]: unknown }): ClientRecord {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    company: (row.company as string | null) ?? null,
+    email: (row.email as string | null) ?? null,
+    phone: (row.phone as string | null) ?? null,
+    notes: (row.notes as string | null) ?? null,
+    createdAt: String(row.created_at),
+  };
+}
+
+function mapProposal(row: { [key: string]: unknown }): ProposalRecord {
+  const client = relatedClient(row.clients as ClientRelation);
+  const assessment = relatedAssessment(row.assessments as AssessmentRelation);
+  return {
+    id: String(row.id),
+    clientId: (row.client_id as string | null) ?? null,
+    clientName: client.name,
+    clientEmail: client.email,
+    title: String(row.title),
+    proposalNumber: String(row.proposal_number),
+    status: row.status as ProposalStatus,
+    value: Number(row.subtotal),
+    maintenanceMonthly: Number(row.maintenance_monthly),
+    depositPercentage: Number(row.deposit_percentage),
+    depositAmount: Number(row.deposit_amount),
+    scopeItems: strings(row.scope_items),
+    addOns: strings(row.add_ons),
+    clientMessage: (row.client_message as string | null) ?? null,
+    validUntil: (row.valid_until as string | null) ?? null,
+    packageName: assessment.packageName,
+    grade: assessment.grade,
+    publicToken: (row.public_token as string | null) ?? null,
+    publicEnabled: Boolean(row.public_enabled),
+    sharedAt: (row.shared_at as string | null) ?? null,
+    viewedAt: (row.viewed_at as string | null) ?? null,
+    acceptedAt: (row.accepted_at as string | null) ?? null,
+    acceptedByName: (row.accepted_by_name as string | null) ?? null,
+    declinedAt: (row.declined_at as string | null) ?? null,
+    declineReason: (row.decline_reason as string | null) ?? null,
+    createdAt: String(row.created_at),
   };
 }
 
 export async function loadWorkspaceData(
   supabase: SupabaseClient,
   ownerId: string,
-): Promise<{ clients: ClientRecord[]; assessments: AssessmentRecord[]; proposals: ProposalRecord[] }> {
-  const [clientResult, assessmentResult, proposalResult] = await Promise.all([
+): Promise<{
+  clients: ClientRecord[];
+  assessments: AssessmentRecord[];
+  proposals: ProposalRecord[];
+  profile: ProfileRecord | null;
+}> {
+  const [clientResult, assessmentResult, proposalResult, profileResult] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, company, email, phone, notes, created_at")
+      .select(CLIENT_SELECT)
       .eq("owner_id", ownerId)
       .order("created_at", { ascending: false })
       .limit(250),
@@ -141,26 +222,24 @@ export async function loadWorkspaceData(
       .limit(100),
     supabase
       .from("proposals")
-      .select("id, client_id, proposal_number, title, status, subtotal, maintenance_monthly, deposit_percentage, deposit_amount, scope_items, add_ons, client_message, valid_until, public_token, public_enabled, shared_at, viewed_at, created_at, clients(name, email), assessments(package_name, grade)")
+      .select(PROPOSAL_SELECT)
       .eq("owner_id", ownerId)
       .order("created_at", { ascending: false })
       .limit(100),
+    supabase
+      .from("profiles")
+      .select("id, email, full_name, business_name")
+      .eq("id", ownerId)
+      .maybeSingle(),
   ]);
 
   if (clientResult.error) throw clientResult.error;
   if (assessmentResult.error) throw assessmentResult.error;
   if (proposalResult.error) throw proposalResult.error;
+  if (profileResult.error) throw profileResult.error;
 
   return {
-    clients: (clientResult.data ?? []).map((row) => ({
-      id: row.id,
-      name: row.name,
-      company: row.company,
-      email: row.email,
-      phone: row.phone,
-      notes: row.notes,
-      createdAt: row.created_at,
-    })),
+    clients: (clientResult.data ?? []).map(mapClient),
     assessments: (assessmentResult.data ?? []).map((row) => {
       const client = relatedClient(row.clients as ClientRelation);
       return {
@@ -168,40 +247,51 @@ export async function loadWorkspaceData(
         clientId: row.client_id,
         clientName: client.name,
         projectName: row.project_name,
-        packageName: row.package_name as AssessmentRecord["packageName"],
+        packageName: row.package_name as PackageName,
         price: Number(row.recommended_price),
-        grade: row.grade as AssessmentRecord["grade"],
+        grade: row.grade as Grade,
         createdAt: row.created_at,
       };
     }),
-    proposals: (proposalResult.data ?? []).map((row) => {
-      const client = relatedClient(row.clients as ClientRelation);
-      const assessment = relatedAssessment(row.assessments as AssessmentRelation);
-      return {
-        id: row.id,
-        clientId: row.client_id,
-        clientName: client.name,
-        clientEmail: client.email,
-        title: row.title,
-        proposalNumber: row.proposal_number,
-        status: row.status as ProposalRecord["status"],
-        value: Number(row.subtotal),
-        maintenanceMonthly: Number(row.maintenance_monthly),
-        depositPercentage: Number(row.deposit_percentage),
-        depositAmount: Number(row.deposit_amount),
-        scopeItems: Array.isArray(row.scope_items) ? row.scope_items.map(String) : [],
-        addOns: Array.isArray(row.add_ons) ? row.add_ons.map(String) : [],
-        clientMessage: row.client_message,
-        validUntil: row.valid_until,
-        packageName: assessment.packageName,
-        grade: assessment.grade,
-        publicToken: row.public_token,
-        publicEnabled: Boolean(row.public_enabled),
-        sharedAt: row.shared_at,
-        viewedAt: row.viewed_at,
-        createdAt: row.created_at,
-      };
-    }),
+    proposals: (proposalResult.data ?? []).map(mapProposal),
+    profile: profileResult.data
+      ? {
+          id: profileResult.data.id,
+          email: profileResult.data.email,
+          fullName: profileResult.data.full_name,
+          businessName: profileResult.data.business_name,
+        }
+      : null,
+  };
+}
+
+export async function updateProfile(
+  supabase: SupabaseClient,
+  ownerId: string,
+  email: string | null,
+  input: ProfileUpdateInput,
+): Promise<ProfileRecord> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .upsert(
+      {
+        id: ownerId,
+        email,
+        full_name: input.fullName.trim() || null,
+        business_name: input.businessName.trim() || null,
+      },
+      { onConflict: "id" },
+    )
+    .select("id, email, full_name, business_name")
+    .single();
+
+  if (error) throw error;
+
+  return {
+    id: data.id,
+    email: data.email,
+    fullName: data.full_name,
+    businessName: data.business_name,
   };
 }
 
@@ -210,7 +300,7 @@ export async function updateClientDetails(
   ownerId: string,
   clientId: string,
   input: ClientUpdateInput,
-) {
+): Promise<ClientRecord> {
   const { data, error } = await supabase
     .from("clients")
     .update({
@@ -222,27 +312,33 @@ export async function updateClientDetails(
     })
     .eq("id", clientId)
     .eq("owner_id", ownerId)
-    .select("id, name, company, email, phone, notes, created_at")
+    .select(CLIENT_SELECT)
     .single();
 
   if (error) throw error;
 
-  return {
-    id: data.id,
-    name: data.name,
-    company: data.company,
-    email: data.email,
-    phone: data.phone,
-    notes: data.notes,
-    createdAt: data.created_at,
-  } satisfies ClientRecord;
+  return mapClient(data);
+}
+
+export async function deleteClient(
+  supabase: SupabaseClient,
+  ownerId: string,
+  clientId: string,
+) {
+  const { error } = await supabase
+    .from("clients")
+    .delete()
+    .eq("id", clientId)
+    .eq("owner_id", ownerId);
+
+  if (error) throw error;
 }
 
 export async function updateProposalStatus(
   supabase: SupabaseClient,
   ownerId: string,
   proposalId: string,
-  status: ProposalRecord["status"],
+  status: ProposalStatus,
 ) {
   const timestampUpdates = status === "sent"
     ? { sent_at: new Date().toISOString() }
@@ -259,11 +355,57 @@ export async function updateProposalStatus(
   if (error) throw error;
 }
 
+export async function updateProposalDetails(
+  supabase: SupabaseClient,
+  ownerId: string,
+  proposalId: string,
+  input: ProposalEditInput,
+): Promise<ProposalRecord> {
+  const value = Math.max(0, Math.round(input.value * 100) / 100);
+  const percentage = Math.min(100, Math.max(0, Math.round(input.depositPercentage)));
+
+  const { data, error } = await supabase
+    .from("proposals")
+    .update({
+      title: input.title.trim() || "Project proposal",
+      subtotal: value,
+      deposit_percentage: percentage,
+      deposit_amount: depositAmount(value, percentage),
+      maintenance_monthly: Math.max(0, Math.round(input.maintenanceMonthly * 100) / 100),
+      valid_until: input.validUntil || null,
+      client_message: input.clientMessage.trim() || null,
+      scope_items: input.scopeItems,
+      add_ons: input.addOns,
+    })
+    .eq("id", proposalId)
+    .eq("owner_id", ownerId)
+    .select(PROPOSAL_SELECT)
+    .single();
+
+  if (error) throw error;
+
+  return mapProposal(data);
+}
+
+export async function deleteProposal(
+  supabase: SupabaseClient,
+  ownerId: string,
+  proposalId: string,
+) {
+  const { error } = await supabase
+    .from("proposals")
+    .delete()
+    .eq("id", proposalId)
+    .eq("owner_id", ownerId);
+
+  if (error) throw error;
+}
+
 export async function setProposalSharing(
   supabase: SupabaseClient,
   ownerId: string,
   proposalId: string,
-  currentStatus: ProposalRecord["status"],
+  currentStatus: ProposalStatus,
   enabled: boolean,
 ) {
   const now = new Date().toISOString();
@@ -290,12 +432,8 @@ export async function setProposalSharing(
     publicToken: data.public_token as string,
     publicEnabled: Boolean(data.public_enabled),
     sharedAt: data.shared_at as string | null,
-    status: data.status as ProposalRecord["status"],
+    status: data.status as ProposalStatus,
   };
-}
-
-function strings(value: unknown) {
-  return Array.isArray(value) ? value.map(String) : [];
 }
 
 export async function loadPublicProposal(
@@ -311,7 +449,7 @@ export async function loadPublicProposal(
   return {
     proposalNumber: String(row.proposal_number ?? ""),
     title: String(row.title ?? "Project proposal"),
-    status: String(row.status ?? "sent") as ProposalRecord["status"],
+    status: String(row.status ?? "sent") as ProposalStatus,
     currency: String(row.currency ?? "USD"),
     value: Number(row.subtotal ?? 0),
     maintenanceMonthly: Number(row.maintenance_monthly ?? 0),
@@ -326,8 +464,11 @@ export async function loadPublicProposal(
     ownerName: String(row.owner_name ?? row.business_name ?? "ScopeGrade team"),
     ownerEmail: typeof row.owner_email === "string" ? row.owner_email : null,
     businessName: String(row.business_name ?? "ScopeGrade AI"),
-    packageName: (row.package_name ?? null) as ProposalRecord["packageName"],
-    grade: (row.grade ?? null) as ProposalRecord["grade"],
+    packageName: (row.package_name ?? null) as PackageName | null,
+    grade: (row.grade ?? null) as Grade | null,
+    acceptedAt: typeof row.accepted_at === "string" ? row.accepted_at : null,
+    acceptedByName: typeof row.accepted_by_name === "string" ? row.accepted_by_name : null,
+    declinedAt: typeof row.declined_at === "string" ? row.declined_at : null,
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
 }
@@ -337,11 +478,62 @@ export async function trackPublicProposalView(supabase: SupabaseClient, token: s
   if (error) throw error;
 }
 
+export type PublicDecisionResult = {
+  ok: boolean;
+  reason: string | null;
+  status: ProposalStatus | null;
+  acceptedAt: string | null;
+  acceptedByName: string | null;
+  declinedAt: string | null;
+};
+
+function readDecision(data: unknown): PublicDecisionResult {
+  const row = (data && typeof data === "object" && !Array.isArray(data) ? data : {}) as Record<string, unknown>;
+  return {
+    ok: Boolean(row.ok),
+    reason: typeof row.reason === "string" ? row.reason : null,
+    status: typeof row.status === "string" ? (row.status as ProposalStatus) : null,
+    acceptedAt: typeof row.accepted_at === "string" ? row.accepted_at : null,
+    acceptedByName: typeof row.accepted_by_name === "string" ? row.accepted_by_name : null,
+    declinedAt: typeof row.declined_at === "string" ? row.declined_at : null,
+  };
+}
+
+/** Records the client's acceptance from the private proposal link. */
+export async function acceptPublicProposal(
+  supabase: SupabaseClient,
+  token: string,
+  name: string,
+): Promise<PublicDecisionResult> {
+  const { data, error } = await supabase.rpc("accept_public_proposal", {
+    p_token: token,
+    p_name: name.trim(),
+  });
+
+  if (error) throw error;
+  return readDecision(data);
+}
+
+/** Records the client's decline, with an optional reason for the owner. */
+export async function declinePublicProposal(
+  supabase: SupabaseClient,
+  token: string,
+  reason: string,
+): Promise<PublicDecisionResult> {
+  const { data, error } = await supabase.rpc("decline_public_proposal", {
+    p_token: token,
+    p_reason: reason.trim(),
+  });
+
+  if (error) throw error;
+  return readDecision(data);
+}
+
 export async function saveAssessmentAndProposal(
   supabase: SupabaseClient,
   ownerId: string,
-  form: ProjectFormInput,
-  assessment: AssessmentInput,
+  form: ProjectInput,
+  assessment: Assessment,
 ) {
   const normalizedEmail = form.clientEmail.trim().toLowerCase();
   let clientId: string | null = null;
@@ -416,9 +608,6 @@ export async function saveAssessmentAndProposal(
   if (assessmentError) throw assessmentError;
 
   const proposalNumber = `SG-${Date.now().toString(36).toUpperCase()}`;
-  const validUntil = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
   const { data: createdProposal, error: proposalError } = await supabase
     .from("proposals")
     .insert({
@@ -426,15 +615,15 @@ export async function saveAssessmentAndProposal(
       client_id: clientId,
       assessment_id: createdAssessment.id,
       proposal_number: proposalNumber,
-      title: form.projectName.trim(),
+      title: form.projectName.trim() || "Project proposal",
       status: "draft",
       subtotal: assessment.price,
-      maintenance_monthly: form.maintenance ? 97 : 0,
-      deposit_percentage: 50,
-      deposit_amount: Math.round(assessment.price * 50) / 100,
+      maintenance_monthly: form.maintenance ? CARE_PLAN_MONTHLY : 0,
+      deposit_percentage: DEFAULT_DEPOSIT_PERCENTAGE,
+      deposit_amount: depositAmount(assessment.price, DEFAULT_DEPOSIT_PERCENTAGE),
       scope_items: assessment.included,
       add_ons: assessment.extras,
-      valid_until: validUntil,
+      valid_until: defaultValidUntil(),
     })
     .select("id")
     .single();

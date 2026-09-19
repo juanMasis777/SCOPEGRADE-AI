@@ -1,85 +1,51 @@
 "use client";
 
 import type { User } from "@supabase/supabase-js";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import AuthGate from "./auth-gate";
 import { createClient } from "../utils/supabase/client";
+import {
+  type Assessment,
+  assessProject,
+  initialProjectInput,
+  money,
+  pricingRules,
+  type ProjectInput,
+  projectTypes,
+} from "../lib/pricing";
 import {
   type AssessmentRecord,
   type ClientRecord,
   type ClientUpdateInput,
+  deleteClient as removeClient,
+  deleteProposal as removeProposal,
   loadWorkspaceData,
+  type ProfileRecord,
+  type ProfileUpdateInput,
+  type ProposalEditInput,
   type ProposalRecord,
+  type ProposalStatus,
   saveAssessmentAndProposal,
   setProposalSharing as updateProposalSharing,
   updateClientDetails,
+  updateProfile,
+  updateProposalDetails,
   updateProposalStatus,
 } from "../utils/supabase/workspace";
 
-type View = "assess" | "clients" | "client-detail" | "dashboard" | "proposals" | "proposal-detail" | "rules";
-type ProjectType = "landing" | "business" | "ecommerce" | "webapp";
+type View =
+  | "assess"
+  | "clients"
+  | "client-detail"
+  | "dashboard"
+  | "proposals"
+  | "proposal-detail"
+  | "rules"
+  | "settings";
 
-type FormState = {
-  projectName: string;
-  clientName: string;
-  clientEmail: string;
-  projectType: ProjectType;
-  pages: number;
-  sections: number;
-  contentReady: boolean;
-  bilingual: boolean;
-  booking: boolean;
-  payments: boolean;
-  clientLogin: boolean;
-  customDesign: boolean;
-  rush: boolean;
-  maintenance: boolean;
-  notes: string;
-};
+type FormState = ProjectInput;
 
-type Assessment = {
-  packageName: "Promotional" | "Professional" | "Custom";
-  grade: "A" | "B" | "C";
-  price: number;
-  range: string;
-  score: number;
-  reasons: string[];
-  included: string[];
-  extras: string[];
-};
-
-const initialForm: FormState = {
-  projectName: "",
-  clientName: "",
-  clientEmail: "",
-  projectType: "landing",
-  pages: 1,
-  sections: 4,
-  contentReady: true,
-  bilingual: false,
-  booking: false,
-  payments: false,
-  clientLogin: false,
-  customDesign: false,
-  rush: false,
-  maintenance: true,
-  notes: "",
-};
-
-const projectTypes: Array<{ value: ProjectType; label: string; detail: string }> = [
-  { value: "landing", label: "Landing page", detail: "Single focused page" },
-  { value: "business", label: "Business website", detail: "Multi-page presence" },
-  { value: "ecommerce", label: "Online store", detail: "Products and payments" },
-  { value: "webapp", label: "Web application", detail: "Accounts and workflows" },
-];
-
-function money(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: value % 1 ? 2 : 0,
-  }).format(value);
-}
+const initialForm: FormState = initialProjectInput;
 
 function shortDate(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -96,138 +62,32 @@ function fullDate(value: string) {
   }).format(new Date(value));
 }
 
-function assessProject(form: FormState): Assessment {
-  let score = { landing: 1, business: 5, ecommerce: 13, webapp: 17 }[form.projectType];
-  score += Math.max(0, form.pages - 1);
-  score += Math.max(0, form.sections - 4) * 0.5;
-  score += form.bilingual ? 3 : 0;
-  score += form.booking ? 3 : 0;
-  score += form.payments ? 5 : 0;
-  score += form.clientLogin ? 7 : 0;
-  score += form.customDesign ? 3 : 0;
-  score += form.rush ? 2 : 0;
-  score += form.contentReady ? 0 : 2;
+/** Local end-of-day deadline for a `YYYY-MM-DD` proposal expiry. */
+function expiryDate(record: Pick<ProposalRecord, "validUntil" | "createdAt">) {
+  if (record.validUntil) return new Date(`${record.validUntil}T23:59:59`);
+  return new Date(new Date(record.createdAt).getTime() + 14 * 24 * 60 * 60 * 1000);
+}
 
-  const promotional =
-    form.projectType === "landing" &&
-    form.pages === 1 &&
-    form.sections <= 4 &&
-    !form.bilingual && !form.booking && !form.payments &&
-    !form.clientLogin && !form.customDesign && !form.rush;
+/** A proposal is only stale while it is still awaiting a client decision. */
+function isExpired(record: Pick<ProposalRecord, "validUntil" | "createdAt" | "status">) {
+  if (record.status !== "sent" && record.status !== "viewed") return false;
+  return expiryDate(record).getTime() < Date.now();
+}
 
-  const professional =
-    !promotional &&
-    (form.projectType === "landing" || form.projectType === "business") &&
-    score < 16 && !form.clientLogin;
+function statusLabelFor(record: Pick<ProposalRecord, "validUntil" | "createdAt" | "status">) {
+  if (isExpired(record)) return "Expired";
+  return record.status.charAt(0).toUpperCase() + record.status.slice(1);
+}
 
-  if (promotional) {
-    return {
-      packageName: "Promotional",
-      grade: "A",
-      price: 99.99,
-      range: "$99.99 fixed scope",
-      score: Math.round(score),
-      reasons: [
-        "One-page website with a focused goal",
-        "Four or fewer standard content sections",
-        "No advanced integrations or custom workflows",
-      ],
-      included: [
-        "Responsive one-page website",
-        "Up to 4 content sections",
-        "Contact form + WhatsApp button",
-        "Delivery target: 5 business days",
-      ],
-      extras: form.maintenance
-        ? ["Website Care Plan — $97/month after the free first month"]
-        : [],
-    };
-  }
+function statusClassFor(record: Pick<ProposalRecord, "validUntil" | "createdAt" | "status">) {
+  return isExpired(record) ? "expired" : record.status;
+}
 
-  if (professional) {
-    let price = 699;
-    price += Math.max(0, form.pages - 5) * 125;
-    price += form.bilingual ? 250 : 0;
-    price += form.booking ? 300 : 0;
-    price += form.payments ? 450 : 0;
-    price += form.customDesign ? 350 : 0;
-    price += form.contentReady ? 0 : 150;
-    price = form.rush ? price * 1.25 : price;
-    price = Math.round(price / 25) * 25;
-
-    return {
-      packageName: "Professional",
-      grade: "B",
-      price,
-      range: `${money(price)} recommended`,
-      score: Math.round(score),
-      reasons: [
-        form.pages > 1
-          ? `${form.pages}-page website requires expanded design and navigation`
-          : "The requested scope exceeds the promotional package",
-        form.bilingual
-          ? "Bilingual content adds an additional production pass"
-          : "Professional presentation and custom layout are required",
-        form.booking || form.payments
-          ? "Business integration requires setup and testing"
-          : "Scope remains within a standard business website",
-      ],
-      included: [
-        `Up to ${Math.max(5, form.pages)} professionally designed pages`,
-        "Mobile, tablet and desktop optimization",
-        "Contact and lead capture setup",
-        "Basic on-page SEO foundation",
-      ],
-      extras: [
-        form.bilingual ? "English + Spanish content structure" : "",
-        form.booking ? "Booking or appointment integration" : "",
-        form.payments ? "Payment integration" : "",
-        form.maintenance ? "Website Care Plan — $97/month after the free first month" : "",
-      ].filter(Boolean),
-    };
-  }
-
-  let price = form.projectType === "webapp" ? 2499 : 1699;
-  price += Math.max(0, form.pages - 5) * 150;
-  price += form.bilingual ? 300 : 0;
-  price += form.booking ? 350 : 0;
-  price += form.payments ? 600 : 0;
-  price += form.clientLogin ? 900 : 0;
-  price += form.customDesign ? 500 : 0;
-  price += form.contentReady ? 0 : 250;
-  price = form.rush ? price * 1.25 : price;
-  price = Math.round(price / 50) * 50;
-
-  return {
-    packageName: "Custom",
-    grade: "C",
-    price,
-    range: `Starting at ${money(price)}`,
-    score: Math.round(score),
-    reasons: [
-      form.projectType === "ecommerce"
-        ? "Online selling introduces products, checkout and payment workflows"
-        : form.projectType === "webapp"
-          ? "User accounts and application workflows require custom development"
-          : "The combination of features exceeds a standard website build",
-      form.clientLogin
-        ? "Secure customer accounts require authentication and protected data"
-        : "Multiple advanced integrations require dedicated testing",
-      "A discovery session is required before a fixed proposal",
-    ],
-    included: [
-      "Project discovery and technical scope",
-      "Custom interface and responsive experience",
-      "Integration setup and quality assurance",
-      "Milestone-based delivery plan",
-    ],
-    extras: [
-      form.payments ? "Secure payment workflow" : "",
-      form.clientLogin ? "Customer login and protected portal" : "",
-      form.bilingual ? "Bilingual interface structure" : "",
-      form.maintenance ? "Custom care plan after launch" : "",
-    ].filter(Boolean),
-  };
+function linesToList(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.replace(/^[-+•\s]+/, "").trim())
+    .filter(Boolean);
 }
 
 const navItems: Array<{ id: View; label: string; short: string }> = [
@@ -236,6 +96,7 @@ const navItems: Array<{ id: View; label: string; short: string }> = [
   { id: "dashboard", label: "Dashboard", short: "03" },
   { id: "proposals", label: "Proposals", short: "04" },
   { id: "rules", label: "Pricing rules", short: "05" },
+  { id: "settings", label: "Settings", short: "06" },
 ];
 
 export default function Home() {
@@ -261,11 +122,18 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
   const [clientSaving, setClientSaving] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [shareUpdating, setShareUpdating] = useState(false);
+  const [proposalSaving, setProposalSaving] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [profile, setProfile] = useState<ProfileRecord | null>(null);
   const [saveError, setSaveError] = useState("");
   const assessment = useMemo(() => assessProject(form), [form]);
-  const displayName = typeof user.user_metadata.full_name === "string" && user.user_metadata.full_name.trim()
-    ? user.user_metadata.full_name.trim()
-    : user.email?.split("@")[0] ?? "Workspace owner";
+  const metadataName = typeof user.user_metadata.full_name === "string" ? user.user_metadata.full_name.trim() : "";
+  const displayName = profile?.fullName?.trim()
+    || metadataName
+    || user.email?.split("@")[0]
+    || "Workspace owner";
+  const businessName = profile?.businessName?.trim() || "ScopeGrade AI";
   const initials = displayName
     .split(/\s+/)
     .map((part) => part[0])
@@ -277,7 +145,6 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
 
   useEffect(() => {
     let active = true;
-    setDataLoading(true);
 
     void loadWorkspaceData(createClient(), user.id)
       .then((data) => {
@@ -285,6 +152,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
         setClientRecords(data.clients);
         setAssessmentRecords(data.assessments);
         setProposalRecords(data.proposals);
+        setProfile(data.profile ?? { id: user.id, email: user.email ?? null, fullName: metadataName || null, businessName: null });
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -297,7 +165,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
     return () => {
       active = false;
     };
-  }, [user.id]);
+  }, [user.id, user.email, metadataName]);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -321,6 +189,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
       setClientRecords(data.clients);
       setAssessmentRecords(data.assessments);
       setProposalRecords(data.proposals);
+      if (data.profile) setProfile(data.profile);
       setProposalCreated(true);
       setView("proposals");
     } catch (error) {
@@ -420,6 +289,77 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
     }
   }
 
+  async function saveProposalDetails(input: ProposalEditInput) {
+    if (!selectedProposal) return;
+    setProposalSaving(true);
+    setSaveError("");
+
+    try {
+      const updated = await updateProposalDetails(createClient(), user.id, selectedProposal.id, input);
+      setProposalRecords((current) => current.map((record) => (record.id === updated.id ? updated : record)));
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to save this proposal.");
+      throw error;
+    } finally {
+      setProposalSaving(false);
+    }
+  }
+
+  async function deleteSelectedProposal() {
+    if (!selectedProposal) return;
+    setRemoving(true);
+    setSaveError("");
+
+    try {
+      await removeProposal(createClient(), user.id, selectedProposal.id);
+      setProposalRecords((current) => current.filter((record) => record.id !== selectedProposal.id));
+      setSelectedProposalId(null);
+      setView("proposals");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to delete this proposal.");
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  async function deleteSelectedClient() {
+    if (!selectedClient) return;
+    setRemoving(true);
+    setSaveError("");
+
+    try {
+      await removeClient(createClient(), user.id, selectedClient.id);
+      const removedId = selectedClient.id;
+      setClientRecords((current) => current.filter((record) => record.id !== removedId));
+      setAssessmentRecords((current) => current.map((record) => (
+        record.clientId === removedId ? { ...record, clientId: null } : record
+      )));
+      setProposalRecords((current) => current.map((record) => (
+        record.clientId === removedId ? { ...record, clientId: null } : record
+      )));
+      setSelectedClientId(null);
+      setView("clients");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to delete this client.");
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  async function saveProfile(input: ProfileUpdateInput) {
+    setProfileSaving(true);
+    setSaveError("");
+
+    try {
+      setProfile(await updateProfile(createClient(), user.id, user.email ?? null, input));
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Unable to save your workspace details.");
+      throw error;
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -440,7 +380,7 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
         <div className="sidebar-insight">
           <span className="pulse-dot" />
           <p>Pricing engine active</p>
-          <small>Rules synced to MADEVHUB packages</small>
+          <small>Quoting as {businessName}</small>
         </div>
 
         <div className="sidebar-footer">
@@ -461,11 +401,12 @@ function ScopeGradeWorkspace({ user, onSignOut }: { user: User; onSignOut: () =>
 
         {view === "assess" && <AssessmentView step={step} setStep={setStep} form={form} update={update} assessment={assessment} resetAssessment={resetAssessment} createProposal={createProposal} saving={saving} saveError={saveError} />}
         {view === "clients" && <ClientsView clients={clientRecords} assessments={assessmentRecords} proposals={proposalRecords} loading={dataLoading} onOpen={openClient} onNewAssessment={() => { setForm(initialForm); setStep(1); setView("assess"); }} />}
-        {view === "client-detail" && selectedClient && <ClientDetailView client={selectedClient} assessments={assessmentRecords.filter((record) => record.clientId === selectedClient.id)} proposals={proposalRecords.filter((record) => record.clientId === selectedClient.id)} onBack={() => setView("clients")} onStartAssessment={() => startAssessmentForClient(selectedClient)} onOpenProposal={openProposal} onSave={saveClient} saving={clientSaving} error={saveError} />}
+        {view === "client-detail" && selectedClient && <ClientDetailView key={selectedClient.id} client={selectedClient} assessments={assessmentRecords.filter((record) => record.clientId === selectedClient.id)} proposals={proposalRecords.filter((record) => record.clientId === selectedClient.id)} onBack={() => setView("clients")} onStartAssessment={() => startAssessmentForClient(selectedClient)} onOpenProposal={openProposal} onSave={saveClient} onDelete={deleteSelectedClient} saving={clientSaving} removing={removing} error={saveError} />}
         {view === "dashboard" && <DashboardView setView={setView} setStep={setStep} records={assessmentRecords} loading={dataLoading} />}
         {view === "proposals" && <ProposalsView proposalCreated={proposalCreated} records={proposalRecords} setView={setView} loading={dataLoading} onOpen={openProposal} />}
-        {view === "proposal-detail" && selectedProposal && <ProposalDetailView record={selectedProposal} ownerName={displayName} ownerEmail={user.email ?? ""} onBack={() => setView("proposals")} onChangeStatus={changeProposalStatus} onChangeSharing={changeProposalSharing} updating={statusUpdating} shareUpdating={shareUpdating} error={saveError} />}
+        {view === "proposal-detail" && selectedProposal && <ProposalDetailView key={selectedProposal.id} record={selectedProposal} ownerName={displayName} ownerEmail={user.email ?? ""} businessName={businessName} onBack={() => setView("proposals")} onChangeStatus={changeProposalStatus} onChangeSharing={changeProposalSharing} onSaveDetails={saveProposalDetails} onDelete={deleteSelectedProposal} updating={statusUpdating} shareUpdating={shareUpdating} detailsSaving={proposalSaving} removing={removing} error={saveError} />}
         {view === "rules" && <RulesView />}
+        {view === "settings" && <SettingsView key={profile?.id ?? "loading"} profile={profile} email={user.email ?? ""} loading={dataLoading} onSave={saveProfile} saving={profileSaving} error={saveError} />}
       </section>
     </main>
   );
@@ -700,7 +641,7 @@ function ClientsView({ clients, assessments, proposals, loading, onOpen, onNewAs
   );
 }
 
-function ClientDetailView({ client, assessments, proposals, onBack, onStartAssessment, onOpenProposal, onSave, saving, error }: {
+function ClientDetailView({ client, assessments, proposals, onBack, onStartAssessment, onOpenProposal, onSave, onDelete, saving, removing, error }: {
   client: ClientRecord;
   assessments: AssessmentRecord[];
   proposals: ProposalRecord[];
@@ -708,19 +649,17 @@ function ClientDetailView({ client, assessments, proposals, onBack, onStartAsses
   onStartAssessment: () => void;
   onOpenProposal: (proposalId: string) => void;
   onSave: (input: ClientUpdateInput) => Promise<void>;
+  onDelete: () => Promise<void>;
   saving: boolean;
+  removing: boolean;
   error: string;
 }) {
-  const [details, setDetails] = useState<ClientUpdateInput>({ name: client.name, company: client.company ?? "", email: client.email ?? "", phone: client.phone ?? "", notes: client.notes ?? "" });
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [details, setDetails] = useState<ClientUpdateInput>(() => ({ name: client.name, company: client.company ?? "", email: client.email ?? "", phone: client.phone ?? "", notes: client.notes ?? "" }));
   const [saved, setSaved] = useState(false);
   const initials = client.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const totalQuoted = proposals.reduce((total, proposal) => total + proposal.value, 0);
   const acceptedValue = proposals.filter((proposal) => proposal.status === "accepted").reduce((total, proposal) => total + proposal.value, 0);
-
-  useEffect(() => {
-    setDetails({ name: client.name, company: client.company ?? "", email: client.email ?? "", phone: client.phone ?? "", notes: client.notes ?? "" });
-    setSaved(false);
-  }, [client]);
 
   function updateDetail(key: keyof ClientUpdateInput, value: string) {
     setDetails((current) => ({ ...current, [key]: value }));
@@ -769,6 +708,19 @@ function ClientDetailView({ client, assessments, proposals, onBack, onStartAsses
           <span className="section-kicker">Quick contact</span><h3>Reach {client.name.split(" ")[0]}</h3>
           <dl><div><dt>Email</dt><dd>{client.email ? <a href={`mailto:${client.email}`}>{client.email}</a> : "Not added"}</dd></div><div><dt>Phone</dt><dd>{client.phone ? <a href={`tel:${client.phone}`}>{client.phone}</a> : "Not added"}</dd></div><div><dt>Company</dt><dd>{client.company || "Not added"}</dd></div></dl>
           <button className="secondary-button" onClick={onStartAssessment}>Start project for this client</button>
+
+          <div className="danger-zone">
+            <strong>Remove this client</strong>
+            <p>The contact record is deleted. Assessments and proposals are kept and stay in your history without a linked client.</p>
+            {confirmDelete ? (
+              <div className="danger-confirm">
+                <button type="button" className="danger-button" disabled={removing} onClick={() => void onDelete()}>{removing ? "Deleting…" : "Yes, delete client"}</button>
+                <button type="button" className="text-button" disabled={removing} onClick={() => setConfirmDelete(false)}>Cancel</button>
+              </div>
+            ) : (
+              <button type="button" className="danger-button ghost" onClick={() => setConfirmDelete(true)}>Delete client</button>
+            )}
+          </div>
         </aside>
       </div>
 
@@ -780,7 +732,7 @@ function ClientDetailView({ client, assessments, proposals, onBack, onStartAsses
 
         <article className="client-history-card">
           <div className="client-card-heading"><div><span className="section-kicker">Sales history</span><h3>Proposals</h3></div><span>{proposals.length}</span></div>
-          {proposals.length === 0 ? <div className="client-mini-empty"><strong>No proposals yet</strong><p>Saving an assessment creates a proposal draft automatically.</p></div> : <div className="client-history-list proposal-history">{proposals.map((record) => <button key={record.id} onClick={() => onOpenProposal(record.id)}><span className={`proposal-status ${record.status}`}>{record.status}</span><p><strong>{record.title}</strong><small>{record.proposalNumber} · {shortDate(record.createdAt)}</small></p><b>{money(record.value)} <em>→</em></b></button>)}</div>}
+          {proposals.length === 0 ? <div className="client-mini-empty"><strong>No proposals yet</strong><p>Saving an assessment creates a proposal draft automatically.</p></div> : <div className="client-history-list proposal-history">{proposals.map((record) => <button key={record.id} onClick={() => onOpenProposal(record.id)}><span className={`proposal-status ${statusClassFor(record)}`}>{statusLabelFor(record)}</span><p><strong>{record.title}</strong><small>{record.proposalNumber} · {shortDate(record.createdAt)}</small></p><b>{money(record.value)} <em>→</em></b></button>)}</div>}
         </article>
       </section>
     </div>
@@ -804,38 +756,55 @@ function ProposalsView({ proposalCreated, records, setView, loading, onOpen }: {
         <div className="empty-state proposal-empty"><span>SG</span><strong>No proposals yet</strong><p>Complete an assessment and ScopeGrade will create the first draft.</p><button className="primary-button" onClick={() => setView("assess")}>Create first assessment</button></div>
       ) : (
         <div className="proposal-grid">
-          {records.map((record, index) => <ProposalCard key={record.id} featured={proposalCreated && index === 0} status={record.status} title={record.title} client={record.clientName} value={record.value} date={shortDate(record.createdAt)} onOpen={() => onOpen(record.id)} />)}
+          {records.map((record, index) => <ProposalCard key={record.id} featured={proposalCreated && index === 0} record={record} onOpen={() => onOpen(record.id)} />)}
         </div>
       )}
     </div>
   );
 }
 
-function ProposalCard({ status, title, client, value, date, featured = false, onOpen }: { status: ProposalRecord["status"]; title: string; client: string; value: number; date: string; featured?: boolean; onOpen: () => void }) {
-  const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
-  return <article className={featured ? "proposal-card featured" : "proposal-card"}><div className="proposal-card-top"><span className={`proposal-status ${status}`}>{statusLabel}</span><span>{date}</span></div><div className="proposal-client"><span>{client.split(" ").map((part) => part[0]).join("").slice(0,2).toUpperCase()}</span><div><strong>{title}</strong><small>{client}</small></div></div><div className="proposal-value"><span>Proposed investment</span><strong>{money(value)}</strong></div><div className="proposal-actions"><button onClick={onOpen}>Open proposal</button><button className="icon-button" aria-label="More proposal actions">•••</button></div></article>;
+function ProposalCard({ record, featured = false, onOpen }: { record: ProposalRecord; featured?: boolean; onOpen: () => void }) {
+  const initials = record.clientName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  return (
+    <article className={featured ? "proposal-card featured" : "proposal-card"}>
+      <div className="proposal-card-top"><span className={`proposal-status ${statusClassFor(record)}`}>{statusLabelFor(record)}</span><span>{shortDate(record.createdAt)}</span></div>
+      <div className="proposal-client"><span>{initials}</span><div><strong>{record.title}</strong><small>{record.clientName}</small></div></div>
+      <div className="proposal-value"><span>Proposed investment</span><strong>{money(record.value)}</strong></div>
+      {record.status === "accepted" && <p className="proposal-card-note accepted">Accepted{record.acceptedByName ? ` by ${record.acceptedByName}` : ""}</p>}
+      {record.status === "declined" && <p className="proposal-card-note declined">Declined by the client</p>}
+      {record.publicEnabled && record.status !== "accepted" && record.status !== "declined" && <p className="proposal-card-note">Share link active</p>}
+      <div className="proposal-actions"><button onClick={onOpen}>Open proposal</button></div>
+    </article>
+  );
 }
 
-function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeStatus, onChangeSharing, updating, shareUpdating, error }: {
+function ProposalDetailView({ record, ownerName, ownerEmail, businessName, onBack, onChangeStatus, onChangeSharing, onSaveDetails, onDelete, updating, shareUpdating, detailsSaving, removing, error }: {
   record: ProposalRecord;
   ownerName: string;
   ownerEmail: string;
+  businessName: string;
   onBack: () => void;
-  onChangeStatus: (status: ProposalRecord["status"]) => Promise<void>;
+  onChangeStatus: (status: ProposalStatus) => Promise<void>;
   onChangeSharing: (enabled: boolean) => Promise<void>;
+  onSaveDetails: (input: ProposalEditInput) => Promise<void>;
+  onDelete: () => Promise<void>;
   updating: boolean;
   shareUpdating: boolean;
+  detailsSaving: boolean;
+  removing: boolean;
   error: string;
 }) {
-  const [origin, setOrigin] = useState("");
-  const [copied, setCopied] = useState(false);
-  const statusLabel = record.status.charAt(0).toUpperCase() + record.status.slice(1);
-  const created = new Date(record.createdAt);
-  const fallbackExpiry = new Date(created.getTime() + 14 * 24 * 60 * 60 * 1000);
-  const expirationDate = record.validUntil
-    ? fullDate(`${record.validUntil}T12:00:00`)
-    : fullDate(fallbackExpiry.toISOString());
-  const nextStatus = record.status === "draft"
+  const origin = useBrowserOrigin();
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [draft, setDraft] = useState(() => editDraftFrom(record));
+  const copied = copiedToken !== null && copiedToken === record.publicToken;
+  const statusLabel = statusLabelFor(record);
+  const expired = isExpired(record);
+  const expirationDate = fullDate(expiryDate(record).toISOString());
+  const nextStatus: ProposalStatus | null = record.status === "draft"
     ? "sent"
     : record.status === "sent" || record.status === "viewed"
       ? "accepted"
@@ -843,22 +812,44 @@ function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeSta
   const nextStatusLabel = nextStatus === "sent" ? "Mark as sent" : "Mark as accepted";
   const sharePath = record.publicToken ? `/proposal/${record.publicToken}` : "";
   const shareUrl = origin && sharePath ? `${origin}${sharePath}` : sharePath;
-
-  useEffect(() => {
-    setOrigin(window.location.origin);
-  }, []);
-
-  useEffect(() => {
-    setCopied(false);
-  }, [record.publicEnabled, record.publicToken]);
+  const previewDeposit = Math.round(draft.value * draft.depositPercentage) / 100;
 
   async function copyShareLink() {
     if (!record.publicToken) return;
     try {
       await navigator.clipboard.writeText(`${window.location.origin}/proposal/${record.publicToken}`);
-      setCopied(true);
+      setCopiedToken(record.publicToken);
     } catch {
-      setCopied(false);
+      setCopiedToken(null);
+    }
+  }
+
+  function toggleEditor() {
+    setEditing((current) => {
+      // Re-seed the draft from the saved record every time the editor opens.
+      if (!current) setDraft(editDraftFrom(record));
+      return !current;
+    });
+    setSaved(false);
+  }
+
+  async function submitDetails(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      await onSaveDetails({
+        title: draft.title,
+        value: Number(draft.value) || 0,
+        depositPercentage: Number(draft.depositPercentage) || 0,
+        maintenanceMonthly: Number(draft.maintenanceMonthly) || 0,
+        validUntil: draft.validUntil,
+        clientMessage: draft.clientMessage,
+        scopeItems: linesToList(draft.scopeItems),
+        addOns: linesToList(draft.addOns),
+      });
+      setSaved(true);
+      setEditing(false);
+    } catch {
+      setSaved(false);
     }
   }
 
@@ -867,6 +858,7 @@ function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeSta
       <div className="proposal-toolbar print-hidden">
         <button className="secondary-button" onClick={onBack}>← Back to proposals</button>
         <div>
+          <button className="secondary-button" onClick={toggleEditor} aria-expanded={editing}>{editing ? "Close editor" : "Edit proposal"}</button>
           <button className="secondary-button" onClick={() => window.print()}>Download / Print PDF</button>
           {!record.publicEnabled && <button className="secondary-button" disabled={shareUpdating} onClick={() => void onChangeSharing(true)}>{shareUpdating ? "Creating link…" : "Create share link"}</button>}
           {nextStatus && <button className="primary-button" disabled={updating} onClick={() => void onChangeStatus(nextStatus)}>{updating ? "Updating…" : nextStatusLabel} {!updating && <span>→</span>}</button>}
@@ -874,10 +866,41 @@ function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeSta
       </div>
 
       {error && <p className="save-error print-hidden" role="alert">{error}</p>}
+      {saved && !error && <p className="client-save-success print-hidden"><span>✓</span> Proposal updated.</p>}
+
+      {record.status === "accepted" && (
+        <section className="proposal-decision accepted print-hidden">
+          <span>✓</span>
+          <div>
+            <strong>Accepted by the client</strong>
+            <small>{record.acceptedByName ? `Signed by ${record.acceptedByName}` : "Approved"}{record.acceptedAt ? ` · ${fullDate(record.acceptedAt)}` : ""}</small>
+          </div>
+        </section>
+      )}
+
+      {record.status === "declined" && (
+        <section className="proposal-decision declined print-hidden">
+          <span>!</span>
+          <div>
+            <strong>Declined by the client</strong>
+            <small>{record.declineReason || "No reason was provided."}{record.declinedAt ? ` · ${fullDate(record.declinedAt)}` : ""}</small>
+          </div>
+        </section>
+      )}
+
+      {expired && (
+        <section className="proposal-decision expired print-hidden">
+          <span>◷</span>
+          <div>
+            <strong>This proposal has expired</strong>
+            <small>Extend the valid-until date in the editor so the client can still accept it.</small>
+          </div>
+        </section>
+      )}
 
       {record.publicEnabled && record.publicToken && (
         <section className="proposal-share-panel print-hidden" aria-label="Public proposal link">
-          <div className="proposal-share-status"><span>✓</span><p><strong>Public link is active</strong><small>Anyone with this private link can view the proposal without signing in.</small></p></div>
+          <div className="proposal-share-status"><span>✓</span><p><strong>Public link is active</strong><small>Anyone with this private link can view and accept the proposal without signing in.</small></p></div>
           <div className="proposal-share-controls">
             <input value={shareUrl} readOnly aria-label="Public proposal link" onFocus={(event) => event.currentTarget.select()} />
             <button className="primary-button" type="button" onClick={() => void copyShareLink()}>{copied ? "Copied!" : "Copy link"}</button>
@@ -886,22 +909,41 @@ function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeSta
         </section>
       )}
 
+      {editing && (
+        <form className="proposal-editor print-hidden" onSubmit={(event) => void submitDetails(event)}>
+          <div className="client-card-heading"><div><span className="section-kicker">Proposal editor</span><h3>Adjust the offer before you send it</h3></div><span>{record.proposalNumber}</span></div>
+          <div className="field-grid">
+            <label className="field full"><span>Proposal title</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} required /></label>
+            <label className="field"><span>Project investment (USD)</span><input type="number" min={0} step={1} value={draft.value} onChange={(event) => setDraft({ ...draft, value: Number(event.target.value) })} /></label>
+            <label className="field"><span>Deposit percentage</span><input type="number" min={0} max={100} step={1} value={draft.depositPercentage} onChange={(event) => setDraft({ ...draft, depositPercentage: Number(event.target.value) })} /></label>
+            <label className="field"><span>Monthly care plan (USD)</span><input type="number" min={0} step={1} value={draft.maintenanceMonthly} onChange={(event) => setDraft({ ...draft, maintenanceMonthly: Number(event.target.value) })} /></label>
+            <label className="field"><span>Valid until</span><input type="date" value={draft.validUntil} onChange={(event) => setDraft({ ...draft, validUntil: event.target.value })} /></label>
+            <label className="field full"><span>Message to the client <em>Optional</em></span><textarea value={draft.clientMessage} onChange={(event) => setDraft({ ...draft, clientMessage: event.target.value })} placeholder="A short personal note shown at the top of the shared proposal…" /></label>
+            <label className="field full"><span>Included deliverables <em>One per line</em></span><textarea value={draft.scopeItems} onChange={(event) => setDraft({ ...draft, scopeItems: event.target.value })} /></label>
+            <label className="field full"><span>Add-ons <em>One per line</em></span><textarea value={draft.addOns} onChange={(event) => setDraft({ ...draft, addOns: event.target.value })} /></label>
+          </div>
+          <div className="client-form-actions"><small>Deposit to begin: <strong>{money(previewDeposit)}</strong> of {money(Number(draft.value) || 0)}</small><button className="primary-button" type="submit" disabled={detailsSaving}>{detailsSaving ? "Saving…" : "Save proposal"} {!detailsSaving && <span>→</span>}</button></div>
+        </form>
+      )}
+
       <article className="proposal-paper">
         <header className="proposal-document-header">
-          <div className="proposal-document-brand"><span>SG</span><div><strong>ScopeGrade AI</strong><small>Qualify the project. Protect your price.</small></div></div>
+          <div className="proposal-document-brand"><span>SG</span><div><strong>{businessName}</strong><small>Prepared with ScopeGrade AI</small></div></div>
           <div className="proposal-document-meta"><span>Proposal</span><strong>{record.proposalNumber}</strong><small>{fullDate(record.createdAt)}</small></div>
         </header>
 
         <section className="proposal-document-hero">
           <div><span>Project proposal</span><h2>{record.title}</h2><p>Prepared for {record.clientName}</p></div>
-          <span className={`proposal-status ${record.status}`}>{statusLabel}</span>
+          <span className={`proposal-status ${statusClassFor(record)}`}>{statusLabel}</span>
         </section>
 
         <section className="proposal-parties">
           <div><span>Prepared for</span><strong>{record.clientName}</strong><p>{record.clientEmail ?? "Client email not provided"}</p></div>
           <div><span>Prepared by</span><strong>{ownerName}</strong><p>{ownerEmail}</p></div>
-          <div><span>Valid until</span><strong>{expirationDate}</strong><p>14-day proposal window</p></div>
+          <div><span>Valid until</span><strong>{expirationDate}</strong><p>{expired ? "This proposal has expired" : "Proposal acceptance window"}</p></div>
         </section>
+
+        {record.clientMessage && <section className="public-proposal-message"><span>Message from {ownerName}</span><p>{record.clientMessage}</p></section>}
 
         <section className="proposal-document-section">
           <div className="proposal-section-heading"><span>01</span><div><small>Recommended solution</small><h3>{record.packageName ?? "Website"} package</h3></div>{record.grade && <b>Grade {record.grade}</b>}</div>
@@ -932,18 +974,122 @@ function ProposalDetailView({ record, ownerName, ownerEmail, onBack, onChangeSta
           <p className="proposal-legal">Requests outside this approved scope may require a separate change order. The remaining project balance is due before final launch or transfer.</p>
         </section>
 
-        <footer className="proposal-document-footer"><span>ScopeGrade AI · Powered by MADEVHUB</span><span>{record.proposalNumber}</span></footer>
+        <footer className="proposal-document-footer"><span>{businessName} · Prepared with ScopeGrade AI</span><span>{record.proposalNumber}</span></footer>
       </article>
+
+      <section className="danger-zone print-hidden">
+        <strong>Delete this proposal</strong>
+        <p>The document and its share link are removed permanently. The underlying assessment stays in your history.</p>
+        {confirmDelete ? (
+          <div className="danger-confirm">
+            <button type="button" className="danger-button" disabled={removing} onClick={() => void onDelete()}>{removing ? "Deleting…" : "Yes, delete proposal"}</button>
+            <button type="button" className="text-button" disabled={removing} onClick={() => setConfirmDelete(false)}>Cancel</button>
+          </div>
+        ) : (
+          <button type="button" className="danger-button ghost" onClick={() => setConfirmDelete(true)}>Delete proposal</button>
+        )}
+      </section>
     </div>
   );
 }
 
+type ProposalDraft = {
+  title: string;
+  value: number;
+  depositPercentage: number;
+  maintenanceMonthly: number;
+  validUntil: string;
+  clientMessage: string;
+  scopeItems: string;
+  addOns: string;
+};
+
+function editDraftFrom(record: ProposalRecord): ProposalDraft {
+  return {
+    title: record.title,
+    value: record.value,
+    depositPercentage: record.depositPercentage,
+    maintenanceMonthly: record.maintenanceMonthly,
+    validUntil: record.validUntil ?? expiryDate(record).toISOString().slice(0, 10),
+    clientMessage: record.clientMessage ?? "",
+    scopeItems: record.scopeItems.join("\n"),
+    addOns: record.addOns.join("\n"),
+  };
+}
+
+function SettingsView({ profile, email, loading, onSave, saving, error }: {
+  profile: ProfileRecord | null;
+  email: string;
+  loading: boolean;
+  onSave: (input: ProfileUpdateInput) => Promise<void>;
+  saving: boolean;
+  error: string;
+}) {
+  const [details, setDetails] = useState<ProfileUpdateInput>(() => ({
+    fullName: profile?.fullName ?? "",
+    businessName: profile?.businessName ?? "",
+  }));
+  const [saved, setSaved] = useState(false);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      await onSave(details);
+      setSaved(true);
+    } catch {
+      setSaved(false);
+    }
+  }
+
+  return (
+    <div className="content-wrap settings-page">
+      <div className="dashboard-welcome">
+        <div><span className="section-kicker">Workspace</span><h2>How you appear to your clients.</h2><p>These details are printed on every proposal and shown on each private client link.</p></div>
+        <span className="status-pill"><i /> Account secured</span>
+      </div>
+
+      {loading ? (
+        <div className="empty-state"><span className="auth-spinner" /><strong>Loading your workspace…</strong></div>
+      ) : (
+      <div className="settings-grid">
+        <form className="client-edit-card" onSubmit={(event) => void submit(event)}>
+          <div className="client-card-heading"><div><span className="section-kicker">Business identity</span><h3>Proposal branding</h3></div><span>Editable</span></div>
+          <div className="field-grid">
+            <label className="field"><span>Your name</span><input value={details.fullName} onChange={(event) => { setDetails({ ...details, fullName: event.target.value }); setSaved(false); }} placeholder="Your full name" /></label>
+            <label className="field"><span>Business name</span><input value={details.businessName} onChange={(event) => { setDetails({ ...details, businessName: event.target.value }); setSaved(false); }} placeholder="Studio or agency name" /></label>
+            <label className="field full"><span>Account email</span><input value={email} readOnly disabled /></label>
+          </div>
+          {saved && !error && <p className="client-save-success"><span>✓</span> Workspace details saved.</p>}
+          {error && <p className="save-error" role="alert">{error}</p>}
+          <div className="client-form-actions"><small>Leave the business name empty to sign proposals as ScopeGrade AI.</small><button className="primary-button" type="submit" disabled={saving || loading}>{saving ? "Saving…" : "Save settings"} {!saving && <span>→</span>}</button></div>
+        </form>
+
+        <aside className="client-quick-card">
+          <span className="section-kicker">Preview</span>
+          <h3>Proposal signature</h3>
+          <div className="settings-preview">
+            <span>SG</span>
+            <div><strong>{details.businessName.trim() || "ScopeGrade AI"}</strong><small>Prepared by {details.fullName.trim() || email.split("@")[0] || "you"}</small></div>
+          </div>
+          <p className="settings-note">Clients see this header at the top of the shared proposal and on the printed PDF.</p>
+        </aside>
+      </div>
+      )}
+    </div>
+  );
+}
+
+/** Current origin, empty during server rendering so markup stays stable. */
+function useBrowserOrigin() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => window.location.origin,
+    () => "",
+  );
+}
+
 function RulesView() {
-  const rules = [
-    { name: "Promotional Website", price: "$99.99", grade: "A", description: "One page, up to 4 sections, standard contact features, no advanced integrations.", tone: "promo" },
-    { name: "Professional Website", price: "From $699", grade: "B", description: "Multi-page business website with optional bilingual, booking and payment integrations.", tone: "professional" },
-    { name: "Custom Project", price: "From $1,500", grade: "C", description: "E-commerce, customer accounts, web applications or projects requiring discovery.", tone: "custom" },
-  ];
+  const rules = pricingRules;
   return (
     <div className="content-wrap rules-page">
       <div className="dashboard-welcome"><div><span className="section-kicker">Qualification logic</span><h2>Your pricing guardrails.</h2><p>These rules determine when a project moves beyond the advertised promotional price.</p></div><span className="status-pill"><i /> Active rules</span></div>
