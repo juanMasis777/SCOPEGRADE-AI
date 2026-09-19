@@ -1,107 +1,126 @@
-# vinext-starter
+# ScopeGrade AI
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+**Qualify the project. Protect your price.**
 
-## Prerequisites
+ScopeGrade AI turns a client request into a graded scope, a recommended package
+and a professional proposal the client can accept from a private link — so an
+advanced project never gets quoted at the promotional price.
+
+## What it does
+
+| Area | What you get |
+| --- | --- |
+| **Assessment** | A three-step intake that scores project complexity and classifies the request as Promotional, Professional or Custom. |
+| **Pricing engine** | A recommended price derived from the actual scope: pages, sections, integrations, rush delivery and content readiness. |
+| **Clients** | A searchable directory with contact details, notes and the full assessment and proposal history per client. |
+| **Proposals** | A printable proposal document generated from the assessment, editable before it is sent, with status tracking from draft to accepted. |
+| **Private client links** | A share link that any client can open without an account, then accept with a typed signature or decline with a reason. |
+| **Settings** | Your name and business name, printed on every proposal and shown on the client link. |
+
+## Requirements
 
 - Node.js `>=22.13.0`
-- Linux with `flock`, `curl`, and GNU `timeout`
+- A free [Supabase](https://supabase.com) project
 
-## Sites Lifecycle
+## Setup
 
-The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
+**1. Install dependencies**
 
-This starter does not use `wrangler.jsonc`.
-
-`install:ci` is intentionally a single, non-retrying `npm ci`. It refuses a concurrent install for the same project, consumes a matching image-seeded npm cache with `--prefer-offline` while retaining registry fallback for a missing cache object, otherwise downloads and verifies the complete vinext tarball recorded in `package-lock.json`, limits npm to one socket, and terminates a stalled install. `build` applies a short timeout. These helpers target Linux and use GNU `timeout`; they are not native macOS scripts.
-
-Scripts that need writable project-scoped home, npm, XDG, and temporary paths use `scripts/sites-env.sh`. The `dev` and `start` scripts honor the caller's runtime environment and keep Wrangler logs inside the checkout. The generated `.sites-runtime/` directory is disposable and ignored by Git.
-
-## Included Shape
-
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+npm install
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+**2. Create the database**
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+In the Supabase dashboard open **SQL Editor** and run each file in
+`supabase/migrations/` in numerical order. See [`supabase/README.md`](supabase/README.md)
+for what each migration adds and how the security model works. Then enable the
+email provider under **Authentication → Providers → Email**.
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+**3. Add your keys**
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+```bash
+cp .env.example .env.local
+```
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+from **Project Settings → API**. Both keys are browser-safe; the `service_role`
+key is never used by this app and must not be added.
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+**4. Run it**
 
-## Diagnostic Commands
+```bash
+npm run dev
+```
 
-- `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build and verify the rendered development-preview metadata
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+Open the printed local address, create an account, and grade your first project.
 
-Use build commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
+## Project layout
 
-The timeout defaults can be overridden for a controlled canary with `SITES_INSTALL_TIMEOUT`, `SITES_INSTALL_KILL_AFTER`, `SITES_BUILD_TIMEOUT`, and `SITES_BUILD_KILL_AFTER`. A timeout fails the command; the helpers never retry an unchanged install or build.
+```
+app/
+  page.tsx                     workspace: assessment, clients, proposals, settings
+  auth-gate.tsx                sign-in / sign-up shell around the workspace
+  globals.css                  the whole design system, including print styles
+  proposal/[token]/            the public, no-login proposal page
+lib/
+  pricing.ts                   the pricing engine — pure, shared and unit tested
+utils/supabase/
+  client.ts                    browser Supabase client
+  workspace.ts                 every read and write the workspace performs
+supabase/migrations/           the database, in order
+tests/                         pricing unit tests and prerendered-HTML checks
+```
 
-## Learn More
+### Changing prices or rules
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+Everything that decides a package or a price lives in `lib/pricing.ts`: the
+package constants, the complexity weights and the qualification rules. Edit that
+file and `npm run test:unit` will tell you what moved. The pricing screen in the
+app reads the same table, so the rules the client sees never drift from the
+rules the engine applies.
+
+## Security model
+
+- Every table has row level security, and every policy matches `auth.uid()`
+  against the row's `owner_id`. A signed-in user can only reach their own data.
+- The public proposal page never touches a table. It calls `security definer`
+  functions that return a fixed, safe payload for a link that is still enabled,
+  and that record an acceptance only inside the proposal's valid window.
+- Share links are random UUIDs. Revoking one disables it immediately, and
+  creating a new link issues a new token, so the old URL stops working.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Start the development server |
+| `npm run build` | Build the deployable artifact |
+| `npm run start` | Serve the built application |
+| `npm run test:unit` | Run the pricing engine tests (fast, no build) |
+| `npm test` | Unit tests, then a build, then checks on the prerendered HTML |
+| `npm run lint` | ESLint over the whole project |
+
+## Deployment
+
+A standard Next.js App Router application, deployed on
+[Vercel](https://vercel.com). Import the repository, then add the two
+environment variables under **Settings → Environment Variables** for every
+environment you deploy:
+
+| Variable | Where it comes from |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | the same page, the publishable (anon) key |
+
+Both are browser-safe by design. Without them the deployment renders a setup
+notice instead of the workspace, so a missing variable is visible rather than a
+runtime crash. Run the SQL migrations against your Supabase project before the
+first sign-up.
+
+## Not included yet
+
+Online deposit payments. A client accepts a proposal in the app today, and the
+deposit is collected out of band. The proposal already stores the deposit
+percentage and amount, so a Stripe Checkout step would slot in at acceptance
+without a schema change.

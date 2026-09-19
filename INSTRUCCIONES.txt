@@ -1,38 +1,99 @@
-SCOPEGRADE AI — PRIMERA VERSION MVP
-====================================
+SCOPEGRADE AI - GUIA DE INSTALACION Y USO
+=========================================
+
+QUE ES
+ScopeGrade AI convierte la peticion de un cliente en un alcance calificado, un
+paquete recomendado y una propuesta profesional que el cliente puede aceptar
+desde un enlace privado. Asi un proyecto avanzado nunca se cotiza al precio
+promocional.
 
 REQUISITOS
-- Node.js 22 o una version compatible.
-- Visual Studio Code.
+- Node.js 22.13 o superior.
+- Visual Studio Code (o cualquier editor).
+- Una cuenta gratuita de Supabase (https://supabase.com).
 
-COMANDOS PARA EJECUTAR EL PROYECTO
-1. Abre la carpeta ScopeGrade_AI_MVP en Visual Studio Code.
+PASO 1 - INSTALAR
+1. Abre la carpeta del proyecto en Visual Studio Code.
 2. Abre la terminal dentro de esa carpeta.
-3. Ejecuta:
+3. Ejecuta:  npm install
 
-   npm install
+PASO 2 - CREAR LA BASE DE DATOS
+1. Entra a tu proyecto en Supabase.
+2. Abre "SQL Editor" y luego "New query".
+3. Copia y ejecuta, EN ORDEN, cada archivo de la carpeta supabase/migrations:
+   - 0001_initial_schema.sql       (tablas, seguridad y perfiles)
+   - 0002_public_proposal_links.sql (enlaces privados de propuesta)
+   - 0003_proposal_decisions.sql    (aceptar o rechazar desde el enlace)
+4. Ve a "Authentication" -> "Providers" -> "Email" y confirma que esta activo.
+
+Los archivos se pueden volver a ejecutar sin romper nada.
+
+PASO 3 - CONFIGURAR LAS CLAVES
+1. Copia el archivo .env.example y renombra la copia a .env.local
+2. En Supabase entra a "Project Settings" -> "API" y copia:
+   - Project URL          -> NEXT_PUBLIC_SUPABASE_URL
+   - Publishable (anon)   -> NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+3. Guarda el archivo. NUNCA pongas aqui la clave service_role.
+
+PASO 4 - EJECUTAR
    npm run dev
+Abre la direccion local que aparece en la terminal y crea tu cuenta.
 
-4. Abre la direccion local que aparezca en la terminal.
+COMO SE USA
+1. Nueva evaluacion: responde los tres pasos y obten el grado y el precio.
+2. Al guardar se crea el cliente y una propuesta en borrador automaticamente.
+3. Abre la propuesta y usa "Edit proposal" para ajustar precio, deposito,
+   vigencia, entregables y el mensaje al cliente.
+4. Pulsa "Create share link" y copia el enlace privado.
+5. El cliente abre el enlace sin registrarse, revisa la propuesta y la acepta
+   escribiendo su nombre, o la rechaza indicando un motivo.
+6. La decision aparece de inmediato en tu propuesta y en el tablero.
+7. En "Settings" pon tu nombre y el de tu negocio: es lo que ve el cliente.
 
 ARCHIVOS PRINCIPALES
-- app/page.tsx: interfaz, formularios y logica de calificacion/precios.
-- app/globals.css: diseno completo y adaptacion para telefonos.
-- app/layout.tsx: titulo, descripcion y configuracion para compartir.
-- public/og.png: imagen social de ScopeGrade AI.
+- lib/pricing.ts               motor de precios y reglas (aqui se cambian)
+- app/page.tsx                 espacio de trabajo completo
+- app/auth-gate.tsx            registro e inicio de sesion
+- app/proposal/[token]/        pagina publica de la propuesta
+- utils/supabase/workspace.ts  lecturas y escrituras en la base de datos
+- app/globals.css              diseno, version movil e impresion
+- supabase/migrations/         base de datos
 
-FUNCIONES INCLUIDAS
-- Evaluacion del proyecto en tres pasos.
-- Clasificacion Promotional, Professional o Custom.
-- Calculo dinamico del precio recomendado.
-- Dashboard demostrativo.
-- Creacion de una propuesta preliminar.
-- Pantalla con las reglas de precio.
+COMANDOS UTILES
+- npm run dev         iniciar el servidor de desarrollo
+- npm run build       compilar para publicar (Next.js)
+- npm run test:unit   probar el motor de precios (rapido)
+- npm test            pruebas completas mas compilacion
+- npm run lint        revisar el codigo
 
 ESTADO DE ESTA VERSION
-- Es un MVP funcional del lado del navegador.
-- Aun no guarda clientes permanentemente.
-- Aun no tiene registro de usuarios.
-- Aun no procesa pagos con Stripe.
-- Las siguientes etapas agregaran base de datos, autenticacion, PDF y pagos.
+Incluido:
+- Evaluacion en tres pasos y clasificacion Promotional, Professional o Custom.
+- Calculo dinamico del precio recomendado.
+- Registro e inicio de sesion con correo y contrasena.
+- Base de datos permanente con seguridad por usuario.
+- Gestion de clientes con historial y busqueda.
+- Propuestas editables, con impresion y descarga en PDF.
+- Enlace privado para el cliente, con aceptacion firmada o rechazo con motivo.
+- Tablero con valor cotizado, promedio y margen protegido.
+- Ajustes de marca del negocio.
 
+Pendiente:
+- Cobro del deposito en linea con Stripe. Hoy la propuesta ya guarda el
+  porcentaje y el monto del deposito, asi que el cobro se puede agregar en el
+  momento de la aceptacion sin cambiar la base de datos.
+
+PUBLICAR EN VERCEL
+El proyecto es una aplicacion Next.js estandar. En Vercel importa el
+repositorio y agrega estas dos variables en Settings -> Environment Variables:
+   NEXT_PUBLIC_SUPABASE_URL
+   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+Sin ellas el sitio publicado muestra la pantalla de configuracion en vez del
+espacio de trabajo. Recuerda ejecutar antes las migraciones SQL en Supabase.
+
+CONSEJO DE SEGURIDAD
+Cada usuario solo puede ver sus propios clientes y propuestas. La pagina publica
+no lee las tablas directamente: usa funciones que devuelven unicamente los datos
+seguros de la propuesta y solo mientras el enlace siga activo. Si compartes un
+enlace por error, entra a la propuesta y pulsa "Revoke": deja de funcionar al
+instante.

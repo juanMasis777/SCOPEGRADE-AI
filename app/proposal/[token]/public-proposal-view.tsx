@@ -1,20 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "../../../utils/supabase/client";
+import { money } from "../../../lib/pricing";
+import { createClient, isSupabaseConfigured } from "../../../utils/supabase/client";
 import {
+  acceptPublicProposal,
+  declinePublicProposal,
   loadPublicProposal,
   type PublicProposalRecord,
   trackPublicProposalView,
 } from "../../../utils/supabase/workspace";
 
-function money(value: number, currency: string) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: value % 1 ? 2 : 0,
-  }).format(value);
-}
+type DecisionMode = "idle" | "accepting" | "declining";
 
 function fullDate(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -26,10 +23,22 @@ function fullDate(value: string) {
 
 export default function PublicProposalView({ token }: { token: string }) {
   const [record, setRecord] = useState<PublicProposalRecord | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(isSupabaseConfigured);
+  const [error, setError] = useState(() => (
+    isSupabaseConfigured() ? "" : "This proposal could not be opened."
+  ));
+  const [mode, setMode] = useState<DecisionMode>("idle");
+  const [signature, setSignature] = useState("");
+  const [declineReason, setDeclineReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [decisionError, setDecisionError] = useState("");
+  // Captured once when the proposal loads so the expiry notice cannot flip
+  // while the visitor is halfway through accepting.
+  const [openedAt, setOpenedAt] = useState(0);
 
   useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
     let active = true;
     const supabase = createClient();
 
@@ -37,6 +46,7 @@ export default function PublicProposalView({ token }: { token: string }) {
       .then((proposal) => {
         if (!active) return;
         setRecord(proposal);
+        setOpenedAt(Date.now());
         if (proposal) {
           void trackPublicProposalView(supabase, token).catch(() => undefined);
         }
@@ -78,14 +88,62 @@ export default function PublicProposalView({ token }: { token: string }) {
   const validUntil = record.validUntil
     ? new Date(`${record.validUntil}T23:59:59`)
     : fallbackExpiry;
-  const expired = validUntil.getTime() < Date.now() && record.status !== "accepted";
-  const displayStatus = record.status === "accepted" ? "Accepted" : expired ? "Expired" : "Proposal ready";
-  const displayStatusClass = record.status === "accepted" ? "accepted" : expired ? "expired" : "sent";
+  const decided = record.status === "accepted" || record.status === "declined";
+  const expired = validUntil.getTime() < openedAt && !decided;
+  const displayStatus = record.status === "accepted"
+    ? "Accepted"
+    : record.status === "declined"
+      ? "Declined"
+      : expired
+        ? "Expired"
+        : "Proposal ready";
+  const displayStatusClass = record.status === "accepted"
+    ? "accepted"
+    : record.status === "declined"
+      ? "declined"
+      : expired
+        ? "expired"
+        : "sent";
+  const canDecide = !decided && !expired && (record.status === "sent" || record.status === "viewed");
+
+  async function submitDecision(accepted: boolean) {
+    setSubmitting(true);
+    setDecisionError("");
+
+    try {
+      const supabase = createClient();
+      const result = accepted
+        ? await acceptPublicProposal(supabase, token, signature)
+        : await declinePublicProposal(supabase, token, declineReason);
+
+      if (!result.ok) {
+        setDecisionError(
+          result.reason === "name_required"
+            ? "Please type your full name to sign this approval."
+            : "This proposal is no longer open for a decision. Contact the sender for an updated link.",
+        );
+        return;
+      }
+
+      setRecord((current) => current && {
+        ...current,
+        status: result.status ?? (accepted ? "accepted" : "declined"),
+        acceptedAt: result.acceptedAt ?? current.acceptedAt,
+        acceptedByName: result.acceptedByName ?? current.acceptedByName,
+        declinedAt: result.declinedAt ?? current.declinedAt,
+      });
+      setMode("idle");
+    } catch {
+      setDecisionError("The decision could not be saved. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <main className="public-proposal-shell">
       <header className="public-proposal-topbar print-hidden">
-        <div className="public-proposal-brand"><span>SG</span><p><strong>ScopeGrade AI</strong><small>Secure proposal</small></p></div>
+        <div className="public-proposal-brand"><span>SG</span><p><strong>{record.businessName}</strong><small>Secure proposal</small></p></div>
         <div className="public-proposal-actions"><span><i /> Private link</span><button type="button" onClick={() => window.print()}>Download / Print PDF</button></div>
       </header>
 
@@ -144,8 +202,89 @@ export default function PublicProposalView({ token }: { token: string }) {
           <p className="proposal-legal">Requests outside this approved scope may require a separate change order. The remaining project balance is due before final launch or transfer.</p>
         </section>
 
-        <footer className="proposal-document-footer"><span>Prepared securely with ScopeGrade AI</span><span>{record.proposalNumber}</span></footer>
+        <footer className="proposal-document-footer"><span>{record.acceptedByName ? `Accepted by ${record.acceptedByName}` : "Prepared securely with ScopeGrade AI"}</span><span>{record.proposalNumber}</span></footer>
       </article>
+
+      <section className="public-decision print-hidden" aria-live="polite">
+        {record.status === "accepted" && (
+          <div className="public-decision-result accepted">
+            <span>✓</span>
+            <div>
+              <strong>Proposal accepted</strong>
+              <p>
+                Thank you{record.acceptedByName ? `, ${record.acceptedByName}` : ""}. {record.ownerName} has been notified and will follow up with the deposit of {money(record.depositAmount, record.currency)} and the kickoff details.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {record.status === "declined" && (
+          <div className="public-decision-result declined">
+            <span>·</span>
+            <div>
+              <strong>Proposal declined</strong>
+              <p>Your response was recorded. If this was a mistake, contact {record.ownerName} and they can reissue the proposal.</p>
+            </div>
+          </div>
+        )}
+
+        {expired && !decided && (
+          <div className="public-decision-result expired">
+            <span>◷</span>
+            <div>
+              <strong>This proposal has expired</strong>
+              <p>The acceptance window closed on {fullDate(validUntil.toISOString())}. Ask {record.ownerName} for an updated proposal.</p>
+            </div>
+          </div>
+        )}
+
+        {canDecide && mode === "idle" && (
+          <div className="public-decision-prompt">
+            <div>
+              <span>Ready to start?</span>
+              <strong>Approve this scope and {record.ownerName.split(" ")[0]} will schedule your project.</strong>
+              <small>Accepting confirms the deliverables and the investment of {money(record.value, record.currency)}.</small>
+            </div>
+            <div className="public-decision-buttons">
+              <button type="button" className="primary-button" onClick={() => { setMode("accepting"); setDecisionError(""); }}>Accept proposal <span>→</span></button>
+              <button type="button" className="text-button" onClick={() => { setMode("declining"); setDecisionError(""); }}>Decline</button>
+            </div>
+          </div>
+        )}
+
+        {canDecide && mode === "accepting" && (
+          <form className="public-decision-form" onSubmit={(event) => { event.preventDefault(); void submitDecision(true); }}>
+            <span>Digital approval</span>
+            <strong>Type your full name to accept this proposal.</strong>
+            <label>
+              <span>Full name</span>
+              <input value={signature} onChange={(event) => setSignature(event.target.value)} placeholder="Your full name" autoComplete="name" required minLength={2} />
+            </label>
+            <p className="public-decision-legal">By accepting you confirm the scope and the investment of {money(record.value, record.currency)}, with a deposit of {money(record.depositAmount, record.currency)} to begin.</p>
+            {decisionError && <p className="auth-alert error" role="alert">{decisionError}</p>}
+            <div className="public-decision-buttons">
+              <button type="submit" className="primary-button" disabled={submitting || signature.trim().length < 2}>{submitting ? "Recording…" : "Confirm acceptance"} {!submitting && <span>→</span>}</button>
+              <button type="button" className="text-button" disabled={submitting} onClick={() => setMode("idle")}>Cancel</button>
+            </div>
+          </form>
+        )}
+
+        {canDecide && mode === "declining" && (
+          <form className="public-decision-form" onSubmit={(event) => { event.preventDefault(); void submitDecision(false); }}>
+            <span>Not this time</span>
+            <strong>Let {record.ownerName.split(" ")[0]} know why, so they can adjust the offer.</strong>
+            <label>
+              <span>Reason <em>Optional</em></span>
+              <textarea value={declineReason} onChange={(event) => setDeclineReason(event.target.value)} placeholder="Budget, timing, scope…" maxLength={500} />
+            </label>
+            {decisionError && <p className="auth-alert error" role="alert">{decisionError}</p>}
+            <div className="public-decision-buttons">
+              <button type="submit" className="secondary-button" disabled={submitting}>{submitting ? "Sending…" : "Send decline"}</button>
+              <button type="button" className="text-button" disabled={submitting} onClick={() => setMode("idle")}>Back</button>
+            </div>
+          </form>
+        )}
+      </section>
 
       <section className="public-proposal-contact print-hidden">
         <div><span>Questions about this proposal?</span><strong>Contact {record.ownerName}</strong></div>

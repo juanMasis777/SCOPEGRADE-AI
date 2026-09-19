@@ -2,7 +2,7 @@
 
 import type { User } from "@supabase/supabase-js";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
-import { createClient } from "../utils/supabase/client";
+import { createClient, isSupabaseConfigured } from "../utils/supabase/client";
 
 type AuthMode = "signin" | "signup";
 
@@ -12,7 +12,8 @@ type AuthGateProps = {
 
 export default function AuthGate({ children }: AuthGateProps) {
   const [user, setUser] = useState<User | null>(null);
-  const [checkingSession, setCheckingSession] = useState(true);
+  // Nothing to check when the keys are missing: the setup notice renders instead.
+  const [checkingSession, setCheckingSession] = useState(isSupabaseConfigured);
   const [mode, setMode] = useState<AuthMode>("signin");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -22,6 +23,8 @@ export default function AuthGate({ children }: AuthGateProps) {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
     const supabase = createClient();
 
     void supabase.auth.getSession().then(({ data }) => {
@@ -100,6 +103,27 @@ export default function AuthGate({ children }: AuthGateProps) {
     setMode(nextMode);
     setError("");
     setMessage("");
+  }
+
+  if (!isSupabaseConfigured()) {
+    return (
+      <main className="setup-notice">
+        <div>
+          <span className="brand-mark">SG</span>
+          <h1>ScopeGrade AI needs its database keys</h1>
+          <p>
+            Copy <code>.env.example</code> to <code>.env.local</code>, then add your
+            Supabase project URL and publishable key. Restart the server afterwards.
+          </p>
+          <ol>
+            <li>Run every file in <code>supabase/migrations/</code> in order, from the Supabase SQL Editor.</li>
+            <li>Copy <code>NEXT_PUBLIC_SUPABASE_URL</code> and <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> from Project Settings → API.</li>
+            <li>Enable the email provider under Authentication → Providers.</li>
+          </ol>
+          <small>Full steps are in README.md and INSTRUCCIONES.txt.</small>
+        </div>
+      </main>
+    );
   }
 
   if (checkingSession) {
