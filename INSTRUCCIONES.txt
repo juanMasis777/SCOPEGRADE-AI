@@ -61,7 +61,7 @@ ARCHIVOS PRINCIPALES
 
 COMANDOS UTILES
 - npm run dev         iniciar el servidor de desarrollo
-- npm run build       compilar para publicar
+- npm run build       compilar para publicar (Next.js)
 - npm run test:unit   probar el motor de precios (rapido)
 - npm test            pruebas completas mas compilacion
 - npm run lint        revisar el codigo
@@ -82,6 +82,14 @@ Pendiente:
 - Cobro del deposito en linea con Stripe. Hoy la propuesta ya guarda el
   porcentaje y el monto del deposito, asi que el cobro se puede agregar en el
   momento de la aceptacion sin cambiar la base de datos.
+
+PUBLICAR EN VERCEL
+El proyecto es una aplicacion Next.js estandar. En Vercel importa el
+repositorio y agrega estas dos variables en Settings -> Environment Variables:
+   NEXT_PUBLIC_SUPABASE_URL
+   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+Sin ellas el sitio publicado muestra la pantalla de configuracion en vez del
+espacio de trabajo. Recuerda ejecutar antes las migraciones SQL en Supabase.
 
 CONSEJO DE SEGURIDAD
 Cada usuario solo puede ver sus propios clientes y propuestas. La pagina publica

@@ -21,7 +21,6 @@ advanced project never gets quoted at the promotional price.
 
 - Node.js `>=22.13.0`
 - A free [Supabase](https://supabase.com) project
-- Linux or macOS for development (the `install:ci` helper is Linux-only; `npm install` works anywhere)
 
 ## Setup
 
@@ -70,7 +69,7 @@ utils/supabase/
   client.ts                    browser Supabase client
   workspace.ts                 every read and write the workspace performs
 supabase/migrations/           the database, in order
-tests/                         pricing unit tests and rendered-HTML checks
+tests/                         pricing unit tests and prerendered-HTML checks
 ```
 
 ### Changing prices or rules
@@ -99,18 +98,25 @@ rules the engine applies.
 | `npm run build` | Build the deployable artifact |
 | `npm run start` | Serve the built application |
 | `npm run test:unit` | Run the pricing engine tests (fast, no build) |
-| `npm test` | Unit tests, then a build, then the rendered-HTML checks |
+| `npm test` | Unit tests, then a build, then checks on the prerendered HTML |
 | `npm run lint` | ESLint over the whole project |
-| `npm run install:ci` | The bounded lockfile install used by CI (Linux) |
 
-## Deployment notes
+## Deployment
 
-The app builds to a Cloudflare Worker through
-[vinext](https://github.com/cloudflare/vinext); `worker/index.ts` is the entry
-point and `.openai/hosting.json` declares optional Sites bindings. Set the two
-`NEXT_PUBLIC_SUPABASE_*` variables in your hosting environment before deploying.
-`app/chatgpt-auth.ts` ships with the platform template and is unused by the
-workspace, which authenticates through Supabase.
+A standard Next.js App Router application, deployed on
+[Vercel](https://vercel.com). Import the repository, then add the two
+environment variables under **Settings → Environment Variables** for every
+environment you deploy:
+
+| Variable | Where it comes from |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | the same page, the publishable (anon) key |
+
+Both are browser-safe by design. Without them the deployment renders a setup
+notice instead of the workspace, so a missing variable is visible rather than a
+runtime crash. Run the SQL migrations against your Supabase project before the
+first sign-up.
 
 ## Not included yet
 
